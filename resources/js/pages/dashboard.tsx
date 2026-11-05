@@ -2,6 +2,7 @@ import { DatePicker } from '@/components/date-picker';
 import { Button } from '@/components/glint/button';
 import { Input } from '@/components/glint/input';
 import { Select } from '@/components/glint/select';
+import { Hyperlink } from '@/components/ui/hyperlink';
 import { AlarmClock, Eye, Receipt, TrendingUp, Wallet } from '@/icons';
 import AppLayout from '@/layouts/app-layout';
 import { fmt, peso, prettyDate } from '@/lib/records';
@@ -152,6 +153,16 @@ function Skipped({ doc, label, gaps }: { doc: 'si' | 'dr'; label: string; gaps: 
         </div>
     );
 }
+
+/** What each age group means, for its hover card. */
+const AGING_HINTS: Record<string, string> = {
+    'not-due': 'still within their terms',
+    '1-30': '1 to 30 days past the due date (SI date + terms)',
+    '31-60': '31 to 60 days past the due date (SI date + terms)',
+    '61-90': '61 to 90 days past the due date (SI date + terms)',
+    '90+': 'more than 90 days past the due date (SI date + terms)',
+    'no-due': 'with no SI date or terms, so no due date yet',
+};
 
 const AGING_COLORS = ['bg-teal-300', 'bg-amber-400', 'bg-orange-500', 'bg-rose-500', 'bg-rose-800', 'bg-slate-400'];
 
@@ -431,25 +442,36 @@ export default function Dashboard({
                 </div>
                 <ul className="space-y-0.5">
                     {aging.map((a, i) => (
-                        <li key={a.key}>
-                            <Link
-                                prefetch
-                                href={scoped({ show: a.key })}
-                                className="hover:bg-muted/60 -mx-2 flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm"
-                            >
-                                <span className={cn('size-2.5 shrink-0 rounded-full', AGING_COLORS[i])} />
-                                <span className="min-w-0 flex-1">
-                                    {a.label} <span className="text-muted-foreground text-xs">· {plural(a.count, 'invoice')}</span>
-                                </span>
-                                <span
-                                    className={cn(
-                                        'font-semibold tabular-nums',
-                                        a.key !== 'not-due' && a.key !== 'no-due' && a.amount > 0 && 'text-destructive',
-                                    )}
+                        // The whole row opens the list; the label also explains the group on hover (or focus).
+                        <li
+                            key={a.key}
+                            onClick={() => router.visit(scoped({ show: a.key }))}
+                            className="hover:bg-muted/60 -mx-2 flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm"
+                        >
+                            <span className={cn('size-2.5 shrink-0 rounded-full', AGING_COLORS[i])} />
+                            <span className="min-w-0 flex-1">
+                                <Hyperlink
+                                    href={scoped({ show: a.key })}
+                                    previewTitle={`${a.label}: ${peso(a.amount)}`}
+                                    previewDescription={`${plural(a.count, 'unpaid invoice')} ${AGING_HINTS[a.key] ?? ''}. Click to see them.`}
+                                    onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        router.visit(scoped({ show: a.key }));
+                                    }}
                                 >
-                                    {peso(a.amount)}
-                                </span>
-                            </Link>
+                                    {a.label}
+                                </Hyperlink>{' '}
+                                <span className="text-muted-foreground text-xs">· {plural(a.count, 'invoice')}</span>
+                            </span>
+                            <span
+                                className={cn(
+                                    'font-semibold tabular-nums',
+                                    a.key !== 'not-due' && a.key !== 'no-due' && a.amount > 0 && 'text-destructive',
+                                )}
+                            >
+                                {peso(a.amount)}
+                            </span>
                         </li>
                     ))}
                 </ul>
