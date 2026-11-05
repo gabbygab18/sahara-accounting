@@ -81,7 +81,7 @@ class FakeSheet extends GoogleSheet
 
     public array $styled = [];
 
-    public function styleTabs(array $tabs, array $colors, array $lists): void
+    public function styleTabs(array $tabs, array $colors, array $lists, array $money = []): void
     {
         $this->styled = [...$this->styled, ...$tabs];
     }

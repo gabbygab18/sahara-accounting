@@ -165,7 +165,7 @@ class RecordTest extends TestCase
         $this->assertSame(['2026-10-01', 'DR-1, DR-2', 'Partial'], [$record->dr_date->toDateString(), $record->dr_number, $record->delivery_status]);
         $this->assertSame(['11, 12', 1500.5], [$record->si_number, $record->amount]);
         $this->assertSame(["2026-10-05\n2026-10-01", "DR-1\nDR-2", "Delivered\nNot delivered"], array_slice($record->toRow(), self::col('dr_date'), 3));
-        $this->assertSame(["11\n12", "1000\n500.5", 1500.5], [$record->toRow()[self::col('si_number')], $record->toRow()[self::col('si_amount')], $record->toRow()[self::col('amount')]]);
+        $this->assertSame(["11\n12", "₱1,000.00\n₱500.50", 1500.5], [$record->toRow()[self::col('si_number')], $record->toRow()[self::col('si_amount')], $record->toRow()[self::col('amount')]]);
     }
 
     public function test_an_export_imports_back_the_same()

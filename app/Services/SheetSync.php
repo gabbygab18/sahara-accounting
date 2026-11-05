@@ -186,14 +186,15 @@ class SheetSync
             $this->sheet->fitColumns(array_map('strval', array_keys($next)), count($headers));
         }
 
-        // Paid green, unpaid red, and dropdowns: once per tab (repeating is harmless, so a cleared cache only redoes it).
-        $key = fn ($tab) => 'sheets-styled-v3:'.($this->sheet->spreadsheetId ?? '').':'.$tab;
+        // Paid green, unpaid red, dropdowns and ₱ amounts: once per tab (repeating is harmless, so a cleared cache only redoes it).
+        $key = fn ($tab) => 'sheets-styled-v4:'.($this->sheet->spreadsheetId ?? '').':'.$tab;
         if ($unstyled = array_values(array_filter(array_map('strval', array_keys($next)), fn ($tab) => ! Cache::has($key($tab))))) {
             $col = fn ($column) => array_search($column, array_keys(Record::COLUMNS), true) - 1;
             $this->sheet->styleTabs(
                 $unstyled,
                 [$col('paid') => Record::PAYMENT, $col('check_cleared') => Record::CLEARED],
                 [$col('paid') => array_keys(Record::PAYMENT), $col('delivery_status') => Record::DELIVERY, $col('check_cleared') => array_keys(Record::CLEARED)],
+                [$col('si_amount'), $col('amount')],
             );
             foreach ($unstyled as $tab) {
                 Cache::forever($key($tab), true);

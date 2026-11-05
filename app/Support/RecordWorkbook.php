@@ -62,7 +62,7 @@ class RecordWorkbook
             $sheet->getStyle("{$letter($column)}2:{$letter($column)}{$row}")->getNumberFormat()->setFormatCode('yyyy-mm-dd');
         }
         foreach (['si_amount', 'amount'] as $column) {
-            $sheet->getStyle("{$letter($column)}2:{$letter($column)}{$row}")->getNumberFormat()->setFormatCode('#,##0.00');
+            $sheet->getStyle("{$letter($column)}2:{$letter($column)}{$row}")->getNumberFormat()->setFormatCode('"₱"#,##0.00');
         }
         foreach (array_keys(Record::COLUMNS) as $column) {
             $sheet->getColumnDimension($letter($column))->setAutoSize(true);

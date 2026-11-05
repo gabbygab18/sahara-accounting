@@ -252,8 +252,9 @@ class GoogleSheet
      *
      * @param  array<int, array<string, string>>  $colors  column index => [cell text => background "#rrggbb"]
      * @param  array<int, list<string>>  $lists  column index => dropdown choices (other values still allowed)
+     * @param  list<int>  $money  column indexes shown as ₱1,234.50
      */
-    public function styleTabs(array $tabs, array $colors, array $lists): void
+    public function styleTabs(array $tabs, array $colors, array $lists, array $money = []): void
     {
         $sheets = collect($this->http()->get(self::API.$this->spreadsheetId, ['fields' => 'sheets(properties(sheetId,title),conditionalFormats)'])->throw()->json('sheets'))
             ->keyBy('properties.title');
@@ -281,6 +282,13 @@ class GoogleSheet
                         ],
                     ]]];
                 }
+            }
+            foreach ($money as $col) {
+                $requests[] = ['repeatCell' => [
+                    'range' => $column($col),
+                    'cell' => ['userEnteredFormat' => ['numberFormat' => ['type' => 'CURRENCY', 'pattern' => '"₱"#,##0.00']]],
+                    'fields' => 'userEnteredFormat.numberFormat',
+                ]];
             }
             foreach ($lists as $col => $values) {
                 $requests[] = ['setDataValidation' => ['range' => $column($col), 'rule' => [

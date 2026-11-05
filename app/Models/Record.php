@@ -182,6 +182,10 @@ class Record extends Model
         return array_map(function ($column) {
             if ([$lines, $key] = self::LINES[$column] ?? null) {
                 $values = array_column($this->{$lines}, $key);
+                if ($key === 'amount' && count($values) > 1) {
+                    // Several amounts share a text cell, so the sheet's ₱ format can't reach them: write it in.
+                    $values = array_map(fn ($v) => $v === null ? '' : '₱'.number_format($v, 2), $values);
+                }
 
                 return count($values) > 1 ? implode("\n", array_map(fn ($v) => $v ?? '', $values)) : ($values[0] ?? null);
             }
