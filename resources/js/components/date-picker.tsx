@@ -38,7 +38,8 @@ export function DatePicker({
             <Popover open={open} onOpenChange={setOpen}>
                 <PopoverTrigger
                     aria-label="Pick from the calendar"
-                    className="text-muted-foreground hover:text-foreground absolute top-1/2 left-1.5 -translate-y-1/2 rounded-lg p-1.5"
+                    // Just the icon inside the field: none of the trigger's own button border, fill, shadow or height.
+                    className="text-muted-foreground hover:text-foreground hover:bg-muted aria-expanded:bg-muted absolute top-1/2 left-1.5 size-7 -translate-y-1/2 rounded-lg border-0 bg-transparent p-0 shadow-none"
                 >
                     <CalendarIcon className="size-4" />
                 </PopoverTrigger>
