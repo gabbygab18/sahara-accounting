@@ -128,8 +128,8 @@ class RecordTest extends TestCase
         $this->actingAs(User::factory()->create());
         $this->travelTo('2026-11-20');
         Record::create($this->invoice()); // due Nov 15: overdue
-        Record::create($this->invoice([...$this->si('194652', 1000), 'paid' => true, 'paid_confirmed' => true]));
-        Record::create($this->invoice(['company' => 'Megaworld', 'project' => 'Uptown', ...$this->si('200', 50, '2026-11-10')]));
+        Record::create($this->invoice([...$this->si('194652', 1000), 'paid' => true, 'paid_confirmed' => true, 'check_number' => 'BDO 1', 'or_date' => '2026-11-18']));
+        Record::create($this->invoice(['company' => 'Megaworld', 'project' => 'Uptown', ...$this->si('194655', 50, '2026-11-10')]));
 
         $this->get('/records?company=Cityland+Dev+Corp&payment=unpaid')->assertInertia(fn ($page) => $page
             ->where('records.total', 1)->where('records.data.0.overdue', true)->where('records.data.0.due', '2026-11-15')
@@ -138,9 +138,23 @@ class RecordTest extends TestCase
         $this->get('/records?from=2026-11-01')->assertInertia(fn ($page) => $page->where('records.total', 1)
             ->where('options.companies.0.name', 'Cityland Dev Corp')->where('options.companies.0.tin', '008-424-957-000'));
 
+        // In SI number order, so a gap shows.
+        $this->get('/records')->assertInertia(fn ($page) => $page->where('records.data.0.si_number', '194651')->where('records.data.2.si_number', '194655'));
+
         $this->get('/dashboard')->assertInertia(fn ($page) => $page
             ->where('totals.paid', 1000)->where('totals.unpaid', 444.45)->where('totals.overdue', 394.45)
-            ->where('companies.0.company', 'Cityland Dev Corp')->where('overdue.0.si_number', '194651'));
+            ->where('companies.0.company', 'Cityland Dev Corp')
+            ->where('collect.0.si_number', '194651')->where('collect.0.late', 5) // due Nov 15
+            ->has('collect', 1) // 194655 is due Dec 10: not this week
+            ->where('aging.0.amount', 50)->where('aging.1.amount', 394.45)
+            ->where('month.collected', 1000)->where('month.billed', 50)
+            ->where('uncleared.count', 1)->where('uncleared.rows.0.check_number', 'BDO 1')
+            ->where('skipped.si', null)); // until the booklet's first number is set
+
+        // Backlog below the booklet's first number is not counted.
+        $this->patch('/dashboard/booklet', ['si' => 194652])->assertRedirect();
+        $this->get('/dashboard')->assertInertia(fn ($page) => $page
+            ->where('skipped.si', ['from' => 194652, 'missing' => 2, 'ranges' => [['from' => 194653, 'to' => 194654]]])->where('skipped.dr', null));
     }
 
     public function test_sheet_and_excel_cells_are_read_forgivingly()
@@ -164,7 +178,7 @@ class RecordTest extends TestCase
         ])), 'company' => 'Cityland']);
         $this->assertSame(['2026-10-01', 'DR-1, DR-2', 'Partial'], [$record->dr_date->toDateString(), $record->dr_number, $record->delivery_status]);
         $this->assertSame(['11, 12', 1500.5], [$record->si_number, $record->amount]);
-        $this->assertSame(["2026-10-05\n2026-10-01", "DR-1\nDR-2", "Delivered\nNot delivered"], array_slice($record->toRow(), self::col('dr_date'), 3));
+        $this->assertSame(["10/05/2026\n10/01/2026", "DR-1\nDR-2", "Delivered\nNot delivered"], array_slice($record->toRow(), self::col('dr_date'), 3));
         $this->assertSame(["11\n12", "₱1,000.00\n₱500.50", 1500.5], [$record->toRow()[self::col('si_number')], $record->toRow()[self::col('si_amount')], $record->toRow()[self::col('amount')]]);
     }
 

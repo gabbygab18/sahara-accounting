@@ -12,6 +12,7 @@ Route::redirect('/', '/dashboard')->name('home');
 
 Route::middleware(['auth'])->group(function () {
     Route::get('dashboard', DashboardController::class)->name('dashboard');
+    Route::patch('dashboard/booklet', [DashboardController::class, 'booklet'])->middleware('can:dashboard')->name('dashboard.booklet');
     // Polled every second by every open page: a fingerprint of the records, so pages reload only when it changes.
     Route::get('live', fn () => response()->json(['v' => md5(Record::withTrashed()->max('updated_at').'|'.Record::count())]))->name('live');
 

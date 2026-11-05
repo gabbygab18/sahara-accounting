@@ -23,7 +23,8 @@ class RecordController extends Controller
         $filtered = $this->filtered($request);
 
         return Inertia::render('records/index', [
-            'records' => (clone $filtered)->orderByRaw('si_date IS NULL')->orderByDesc('si_date')->orderByDesc('id')
+            // In SI number order (1, 2, 3...) so a skipped receipt shows; "+ 0" reads "185561, 185562" as 185561 in MySQL and SQLite.
+            'records' => (clone $filtered)->orderByRaw('si_number IS NULL')->orderByRaw('si_number + 0')->orderBy('si_number')->orderBy('id')
                 ->paginate(25)->withQueryString()
                 ->through(fn (Record $r) => [...$r->toArray(), 'due' => $r->dueOn()?->toDateString(), 'overdue' => $r->isOverdue()]),
             // Totals of everything the filters match, not just this page; only for accounts allowed the summary.
