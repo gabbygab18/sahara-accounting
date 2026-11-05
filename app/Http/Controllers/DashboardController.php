@@ -63,9 +63,16 @@ class DashboardController extends Controller
                     'top' => $rows->sortByDesc('amount')->take(5)->map(fn (Record $r) => [...$brief($r), 'late' => $r->daysLate()])->values(),
                 ];
             })->values(),
-            // Overdue, then what falls due within a week: who to call.
-            'collect' => $unpaid->filter(fn ($r) => ($l = $r->daysLate()) !== null && $l >= -7)->sortBy(fn ($r) => $r->dueOn())->take(15)
-                ->map(fn (Record $r) => [...$brief($r), 'due' => $r->dueOn()->toDateString(), 'late' => $r->daysLate()])->values(),
+            // Every unpaid invoice, per group: the group with the most invoices first; in each, the most overdue first.
+            'collect' => $unpaid->groupBy('company')->map(fn ($rows, $group) => [
+                'group' => (string) $group,
+                'count' => $rows->count(),
+                'amount' => round($rows->sum('amount'), 2),
+                'overdue' => round($rows->filter->isOverdue()->sum('amount'), 2),
+                // ponytail: the first 50 in the card; the rest are a click away in Records
+                'rows' => $rows->sortBy(fn ($r) => [$r->dueOn() === null, $r->dueOn()?->timestamp])->take(50)
+                    ->map(fn (Record $r) => [...$brief($r), 'due' => $r->dueOn()?->toDateString(), 'late' => $r->daysLate()])->values(),
+            ])->sortBy([['count', 'desc'], ['amount', 'desc']])->values(),
             'debtors' => self::debtors($records, $paidOn),
             'trend' => self::trend($records, $paidOn, $filters),
             'notInvoiced' => [

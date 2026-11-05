@@ -144,8 +144,10 @@ class RecordTest extends TestCase
         $this->get('/dashboard')->assertInertia(fn ($page) => $page
             ->where('totals.paid', 1000)->where('totals.unpaid', 444.45)->where('totals.overdue', 394.45)
             ->where('companies.0.company', 'Cityland Dev Corp')
-            ->where('collect.0.si_number', '194651')->where('collect.0.late', 5) // due Nov 15
-            ->has('collect', 1) // 194655 is due Dec 10: not this week
+            // Per group, the one with the most unpaid first; each group's invoices most overdue first.
+            ->where('collect.0.group', 'Cityland Dev Corp')->where('collect.0.count', 1)->where('collect.0.overdue', 394.45)
+            ->where('collect.0.rows.0.si_number', '194651')->where('collect.0.rows.0.late', 5) // due Nov 15
+            ->where('collect.1.group', 'Megaworld')->where('collect.1.rows.0.late', -20) // due Dec 10
             ->where('aging.0.amount', 50)->where('aging.1.amount', 394.45)
             ->where('month.collected', 1000)->where('month.billed', 50)
             ->where('uncleared.count', 1)->where('uncleared.rows.0.check_number', 'BDO 1')

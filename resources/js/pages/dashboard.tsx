@@ -3,7 +3,7 @@ import { Button } from '@/components/glint/button';
 import { Input } from '@/components/glint/input';
 import { Select } from '@/components/glint/select';
 import { Hyperlink } from '@/components/ui/hyperlink';
-import { AlarmClock, Eye, Receipt, TrendingUp, Wallet } from '@/icons';
+import { AlarmClock, ChevronDown, Eye, Receipt, TrendingUp, Wallet } from '@/icons';
 import AppLayout from '@/layouts/app-layout';
 import { fmt, peso, prettyDate } from '@/lib/records';
 import { cn } from '@/lib/utils';
@@ -57,7 +57,7 @@ interface Props {
     trend: Month[];
     notInvoiced: { count: number; rows: (Brief & { dr_date: string | null; days: number | null })[] };
     noDue: { count: number; rows: (Brief & { missing: string })[] };
-    collect: (Brief & { due: string; late: number })[];
+    collect: { group: string; count: number; amount: number; overdue: number; rows: (Brief & { due: string | null; late: number | null })[] }[];
     uncleared: { count: number; amount: number; rows: (Brief & { check_number: string | null; check_date: string | null })[] };
     skipped: { si: Gaps | null; dr: Gaps | null };
     companies: (Sums & { company: string })[];
@@ -446,17 +446,57 @@ export default function Dashboard({
             </div>
 
             <Card className="min-w-0 xl:col-span-7">
-                <CardTitle hint="Overdue first, then what falls due within a week.">To collect</CardTitle>
+                <CardTitle hint="Unpaid invoices per group, the group with the most first. Click a group to see its invoices.">To collect</CardTitle>
                 <ul className="divide-y">
-                    {collect.length === 0 && <Empty>Nothing overdue or due this week.</Empty>}
-                    {collect.map((r) => (
-                        <Row
-                            key={r.id}
-                            r={r}
-                            sub={`${[r.sold_to, r.project].filter(Boolean).join(' · ') || 'No company'} · due ${prettyDate(r.due)}`}
-                            note={r.late > 0 ? `${plural(r.late, 'day')} late` : r.late === 0 ? 'Due today' : `Due in ${plural(-r.late, 'day')}`}
-                            noteCls={r.late > 0 ? 'text-destructive' : 'text-amber-600'}
-                        />
+                    {collect.length === 0 && <Empty>Everything has been collected.</Empty>}
+                    {collect.map((g) => (
+                        <li key={g.group}>
+                            <details className="group">
+                                <summary className="hover:bg-muted/60 -mx-2 flex cursor-pointer list-none items-center gap-3 rounded-lg px-2 py-2.5 [&::-webkit-details-marker]:hidden">
+                                    <ChevronDown className="text-muted-foreground size-4 shrink-0 -rotate-90 transition-transform group-open:rotate-0" />
+                                    <span className="min-w-0 flex-1">
+                                        <span className="block truncate text-sm font-semibold">{g.group || '(no group)'}</span>
+                                        <span className="text-muted-foreground block text-[11px]">
+                                            {plural(g.count, 'invoice')} not yet collected
+                                        </span>
+                                    </span>
+                                    <span className="shrink-0 text-right">
+                                        <span className="block text-sm font-semibold tabular-nums">{peso(g.amount)}</span>
+                                        {g.overdue > 0 && (
+                                            <span className="text-destructive block text-[11px] font-medium">{peso(g.overdue)} overdue</span>
+                                        )}
+                                    </span>
+                                </summary>
+                                <ul className="mb-2 ml-5 divide-y border-l pl-3">
+                                    {g.rows.map((r) => (
+                                        <Row
+                                            key={r.id}
+                                            r={r}
+                                            sub={`${[r.sold_to, r.project].filter(Boolean).join(' · ') || 'No company'}${r.due ? ` · due ${prettyDate(r.due)}` : ''}`}
+                                            note={
+                                                r.late === null
+                                                    ? 'No due date'
+                                                    : r.late > 0
+                                                      ? `${plural(r.late, 'day')} late`
+                                                      : r.late === 0
+                                                        ? 'Due today'
+                                                        : `Due in ${plural(-r.late, 'day')}`
+                                            }
+                                            noteCls={r.late !== null && r.late > 0 ? 'text-destructive' : 'text-muted-foreground'}
+                                        />
+                                    ))}
+                                    <li className="py-2">
+                                        <Link
+                                            prefetch
+                                            href={scoped({ company: g.group, payment: 'unpaid' })}
+                                            className="text-primary text-xs font-medium hover:underline"
+                                        >
+                                            {g.count > g.rows.length ? `See all ${fmt(g.count)} in Records` : 'Open in Records'}
+                                        </Link>
+                                    </li>
+                                </ul>
+                            </details>
+                        </li>
                     ))}
                 </ul>
             </Card>
