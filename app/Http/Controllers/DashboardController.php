@@ -54,10 +54,14 @@ class DashboardController extends Controller
                 'collected' => round($records->filter(fn ($r) => $r->paid && $paidOn($r)?->isSameMonth(today()))->sum('amount'), 2),
             ],
             'checkingCount' => $records->filter(fn ($r) => $r->payment() === 'checking')->count(),
-            'aging' => collect(Record::AGING)->map(function ($bucket, $key) use ($unpaid) {
+            'aging' => collect(Record::AGING)->map(function ($bucket, $key) use ($unpaid, $brief) {
                 $rows = $unpaid->filter(fn ($r) => $r->age() === $key);
 
-                return ['key' => $key, 'label' => $bucket[0], 'count' => $rows->count(), 'amount' => round($rows->sum('amount'), 2)];
+                return [
+                    'key' => $key, 'label' => $bucket[0], 'count' => $rows->count(), 'amount' => round($rows->sum('amount'), 2),
+                    // The biggest few, previewed on hover.
+                    'top' => $rows->sortByDesc('amount')->take(5)->map(fn (Record $r) => [...$brief($r), 'late' => $r->daysLate()])->values(),
+                ];
             })->values(),
             // Overdue, then what falls due within a week: who to call.
             'collect' => $unpaid->filter(fn ($r) => ($l = $r->daysLate()) !== null && $l >= -7)->sortBy(fn ($r) => $r->dueOn())->take(15)

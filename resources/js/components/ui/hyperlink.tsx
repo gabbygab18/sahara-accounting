@@ -10,6 +10,8 @@ export interface HyperlinkProps extends AnchorHTMLAttributes<HTMLAnchorElement> 
   /** Headline of the hover preview card. No title and no description = no card. */
   previewTitle?: string;
   previewDescription?: string;
+  /** Anything to show in the card under the title (a short list, figures), in place of the colour thumbnail. */
+  preview?: ReactNode;
   /** Underline and arrow color. */
   color?: string;
   /** Show the nudging arrow. Defaults to true for external links. */
@@ -40,6 +42,7 @@ export function Hyperlink({
   children,
   previewTitle,
   previewDescription,
+  preview,
   color = "currentColor",
   arrow,
   delay = 250,
@@ -55,7 +58,7 @@ export function Hyperlink({
   const timer = useRef<number | undefined>(undefined);
   const external = /^https?:\/\//.test(href);
   const showArrow = arrow ?? external;
-  const hasCard = Boolean(previewTitle || previewDescription);
+  const hasCard = Boolean(previewTitle || previewDescription || preview);
   const host = hostOf(href);
   const hue = hueOf(host);
 
@@ -110,7 +113,7 @@ export function Hyperlink({
           <motion.span
             id={id}
             role="tooltip"
-            className="absolute bottom-full left-0 z-50 block w-72 pb-2.5"
+            className={`absolute bottom-full left-0 z-50 block pb-2.5 ${preview ? "w-80" : "w-72"}`}
             style={{ transformOrigin: "20% 100%", transformPerspective: 600 }}
             initial={reduce ? { opacity: 0 } : { opacity: 0, y: 10, scale: 0.92, rotateX: 18 }}
             animate={{ opacity: 1, y: 0, scale: 1, rotateX: 0 }}
@@ -118,13 +121,15 @@ export function Hyperlink({
             transition={{ type: "spring", stiffness: 420, damping: 22 }}
           >
             <span className="block overflow-hidden rounded-xl border border-border bg-card text-left shadow-2xl shadow-black/30">
-              <span
-                aria-hidden
-                className="block h-20"
-                style={{
-                  background: `radial-gradient(120% 140% at 0% 0%, hsl(${hue} 90% 70%), transparent 60%), radial-gradient(120% 140% at 100% 100%, hsl(${(hue + 60) % 360} 85% 55%), hsl(${(hue + 200) % 360} 60% 25%))`,
-                }}
-              />
+              {!preview && (
+                <span
+                  aria-hidden
+                  className="block h-20"
+                  style={{
+                    background: `radial-gradient(120% 140% at 0% 0%, hsl(${hue} 90% 70%), transparent 60%), radial-gradient(120% 140% at 100% 100%, hsl(${(hue + 60) % 360} 85% 55%), hsl(${(hue + 200) % 360} 60% 25%))`,
+                  }}
+                />
+              )}
               <span className="block p-3">
                 {/* The site, for links that leave the app. */}
                 {external && (
@@ -139,10 +144,11 @@ export function Hyperlink({
                     {host}
                   </span>
                 )}
-                {previewTitle && <span className="mt-1.5 block text-sm font-semibold text-foreground">{previewTitle}</span>}
+                {previewTitle && <span className={`block text-sm font-semibold text-foreground ${external ? "mt-1.5" : ""}`}>{previewTitle}</span>}
                 {previewDescription && (
                   <span className="mt-0.5 line-clamp-2 block text-xs text-muted-foreground">{previewDescription}</span>
                 )}
+                {preview && <span className="mt-2 block">{preview}</span>}
               </span>
             </span>
           </motion.span>

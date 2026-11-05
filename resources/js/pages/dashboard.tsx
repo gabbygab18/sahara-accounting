@@ -52,7 +52,7 @@ interface Props {
     totals: Sums;
     month: { billed: number; collected: number };
     checkingCount: number;
-    aging: { key: string; label: string; count: number; amount: number }[];
+    aging: { key: string; label: string; count: number; amount: number; top: (Brief & { late: number | null })[] }[];
     debtors: { name: string; group: string; unpaid: number; overdue: number; count: number; days: number | null }[];
     trend: Month[];
     notInvoiced: { count: number; rows: (Brief & { dr_date: string | null; days: number | null })[] };
@@ -151,6 +151,34 @@ function Skipped({ doc, label, gaps }: { doc: 'si' | 'dr'; label: string; gaps: 
                 </>
             )}
         </div>
+    );
+}
+
+/** The hover card of an age group: its biggest invoices, and how many more. */
+function AgingPreview({ bucket }: { bucket: Props['aging'][number] }) {
+    if (bucket.count === 0) return <span className="text-muted-foreground block text-xs">No invoices here.</span>;
+    return (
+        <>
+            <span className="block divide-y">
+                {bucket.top.map((r) => (
+                    <span key={r.id} className="flex items-center gap-3 py-1.5">
+                        <span className="min-w-0 flex-1">
+                            <span className="block truncate text-xs font-medium">
+                                {doc(r)} · {r.company || '(no group)'}
+                            </span>
+                            <span className="text-muted-foreground block truncate text-[11px]">
+                                {[r.sold_to, r.late !== null && r.late > 0 && `${plural(r.late, 'day')} late`].filter(Boolean).join(' · ') ||
+                                    'No company'}
+                            </span>
+                        </span>
+                        <span className="shrink-0 text-xs font-semibold tabular-nums">{peso(r.amount)}</span>
+                    </span>
+                ))}
+            </span>
+            <span className="text-primary mt-1.5 block text-[11px] font-medium">
+                {bucket.count > bucket.top.length ? `+ ${fmt(bucket.count - bucket.top.length)} more · ` : ''}Click to see all
+            </span>
+        </>
     );
 }
 
@@ -453,7 +481,8 @@ export default function Dashboard({
                                 <Hyperlink
                                     href={scoped({ show: a.key })}
                                     previewTitle={`${a.label}: ${peso(a.amount)}`}
-                                    previewDescription={`${plural(a.count, 'unpaid invoice')} ${AGING_HINTS[a.key] ?? ''}. Click to see them.`}
+                                    previewDescription={`${plural(a.count, 'unpaid invoice')} ${AGING_HINTS[a.key] ?? ''}.`}
+                                    preview={<AgingPreview bucket={a} />}
                                     onClick={(e) => {
                                         e.preventDefault();
                                         e.stopPropagation();
