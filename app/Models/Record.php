@@ -182,9 +182,12 @@ class Record extends Model
         return array_map(function ($column) {
             if ([$lines, $key] = self::LINES[$column] ?? null) {
                 $values = array_column($this->{$lines}, $key);
+                // Several values share a text cell, so the sheet's ₱ and date formats can't reach them: write them in.
                 if ($key === 'amount' && count($values) > 1) {
-                    // Several amounts share a text cell, so the sheet's ₱ format can't reach them: write it in.
                     $values = array_map(fn ($v) => $v === null ? '' : '₱'.number_format($v, 2), $values);
+                }
+                if ($key === 'date' && count($values) > 1) {
+                    $values = array_map(fn ($v) => $v === null ? '' : Carbon::parse($v)->format('m/d/Y'), $values);
                 }
 
                 return count($values) > 1 ? implode("\n", array_map(fn ($v) => $v ?? '', $values)) : ($values[0] ?? null);

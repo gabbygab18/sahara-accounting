@@ -27,6 +27,12 @@ class SheetSync
     /** The single tab used before one tab per group: never read. Delete it once the group tabs are filled. */
     public const LEGACY_TAB = 'RECORDS';
 
+    /** Every SI number in order, a "Missing" row for each one skipped: written by the app, never read. */
+    public const MASTER_TAB = 'SI MASTER';
+
+    /** ponytail: the master lists at most this many numbers (the highest); raise it if a booklet run gets longer */
+    private const MASTER_ROWS = 5000;
+
     public function __construct(private readonly GoogleSheet $sheet) {}
 
     public static function make(): ?self
@@ -95,7 +101,7 @@ class SheetSync
         }
         $tabOf = function (Record $r) use (&$lower): string {
             $name = mb_substr(trim($r->company), 0, 100) ?: 'No group';
-            $name = mb_strtolower($name) === mb_strtolower(self::LEGACY_TAB) ? "{$name} (group)" : $name;
+            $name = in_array(mb_strtolower($name), [mb_strtolower(self::LEGACY_TAB), mb_strtolower(self::MASTER_TAB)], true) ? "{$name} (group)" : $name;
 
             return $lower[mb_strtolower($name)] ?? $name;
         };
@@ -181,24 +187,33 @@ class SheetSync
         }
         $log->pushed = count($sent);
 
-        // Columns as wide as their longest cell, so check numbers and long names are not cut off.
-        if ($writes) {
-            $this->sheet->fitColumns(array_map('strval', array_keys($next)), count($headers));
-        }
-
-        // Paid green, unpaid red, dropdowns and ₱ amounts: once per tab (repeating is harmless, so a cleared cache only redoes it).
-        $key = fn ($tab) => 'sheets-styled-v4:'.($this->sheet->spreadsheetId ?? '').':'.$tab;
+        // Header colours, banding, filter, paid green / unpaid red, dropdowns, ₱ amounts, dates and alignment: once per tab (repeating is harmless, so a cleared cache only redoes it).
+        $key = fn ($tab) => 'sheets-styled-v6:'.($this->sheet->spreadsheetId ?? '').':'.$tab;
         if ($unstyled = array_values(array_filter(array_map('strval', array_keys($next)), fn ($tab) => ! Cache::has($key($tab))))) {
             $col = fn ($column) => array_search($column, array_keys(Record::COLUMNS), true) - 1;
-            $this->sheet->styleTabs(
-                $unstyled,
-                [$col('paid') => Record::PAYMENT, $col('check_cleared') => Record::CLEARED],
-                [$col('paid') => array_keys(Record::PAYMENT), $col('delivery_status') => Record::DELIVERY, $col('check_cleared') => array_keys(Record::CLEARED)],
-                [$col('si_amount'), $col('amount')],
-            );
+            $this->sheet->styleTabs($unstyled, [
+                'columns' => count($headers),
+                'colors' => [$col('paid') => Record::PAYMENT, $col('check_cleared') => Record::CLEARED],
+                'lists' => [$col('paid') => array_keys(Record::PAYMENT), $col('delivery_status') => Record::DELIVERY, $col('check_cleared') => array_keys(Record::CLEARED)],
+                'money' => [$col('si_amount'), $col('amount')],
+                'centered' => [$col('terms_days')],
+                'dates' => array_map($col, Record::DATES),
+                'sections' => [
+                    [$col('sold_to'), $col('tin'), '#334155'],
+                    [$col('po_date'), $col('po_number'), '#1e40af'],
+                    [$col('dr_date'), $col('delivery_status'), '#0f766e'],
+                    [$col('si_date'), $col('amount'), '#b45309'],
+                    [$col('paid'), $col('or_number'), '#6d28d9'],
+                ],
+            ]);
             foreach ($unstyled as $tab) {
                 Cache::forever($key($tab), true);
             }
+        }
+
+        // Then columns as wide as their longest cell (₱ included), so check numbers and long names are not cut off.
+        if ($writes || $unstyled) {
+            $this->sheet->fitColumns(array_map('strval', array_keys($next)), $headers);
         }
 
         if ($gone) {
@@ -206,6 +221,41 @@ class SheetSync
             $trashed = $records->filter->trashed()->keys();
             Record::onlyTrashed()->whereIn('id', $trashed)->forceDelete();
             $log->pushed += $trashed->count();
+        }
+
+        $this->writeMaster();
+    }
+
+    /**
+     * The "mother file": one row per SI number from the lowest to the highest, so a lost or hidden receipt shows as a
+     * blank "Missing" row, and one entered twice as "Duplicate". Rewritten only when its rows change.
+     */
+    private function writeMaster(): void
+    {
+        $lines = []; // SI number => [row, ...]
+        foreach (Record::get() as $r) {
+            $paid = $r->toRow()[array_search('paid', array_keys(Record::COLUMNS), true)];
+            foreach ($r->sis as $l) {
+                if (ctype_digit((string) $l['number'])) {
+                    $lines[(int) $l['number']][] = [$l['number'], $l['date'], $r->company, $r->sold_to, $r->project, $l['amount'], $paid];
+                }
+            }
+        }
+        ksort($lines);
+        $rows = [['SI #', 'SI DATE', 'GROUP', 'COMPANY (SOLD TO)', 'PROJECT', 'SI AMOUNT', 'PAYMENT STATUS', 'NOTE']];
+        if ($lines) {
+            $last = array_key_last($lines);
+            for ($n = max(array_key_first($lines), $last - self::MASTER_ROWS + 1); $n <= $last; $n++) {
+                foreach ($lines[$n] ?? [[(string) $n, '', '', '', '', '', '']] as $row) {
+                    $rows[] = [...$row, ! isset($lines[$n]) ? 'Missing' : (count($lines[$n]) > 1 ? 'Duplicate' : '')];
+                }
+            }
+        }
+
+        $key = 'sheets-master:'.($this->sheet->spreadsheetId ?? '');
+        if (Cache::get($key) !== ($hash = md5(json_encode($rows)))) {
+            $this->sheet->fillTab(self::MASTER_TAB, $rows, ['money' => [5], 'dates' => [1], 'flag' => [7, ['Missing' => '#f4c7c3', 'Duplicate' => '#fce8b2']]]);
+            Cache::forever($key, $hash);
         }
     }
 

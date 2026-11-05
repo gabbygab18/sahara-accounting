@@ -247,17 +247,22 @@ class GoogleSheet
     }
 
     /**
-     * Colours and dropdowns for status columns of these tabs. Safe to repeat: its own colour rules are
-     * replaced, not stacked, and other rules are left alone.
+     * The look of these tabs. Safe to repeat: its own colour rules and the banding are replaced, not stacked.
      *
-     * @param  array<int, array<string, string>>  $colors  column index => [cell text => background "#rrggbb"]
-     * @param  array<int, list<string>>  $lists  column index => dropdown choices (other values still allowed)
-     * @param  list<int>  $money  column indexes shown as ₱1,234.50
+     * @param  array{columns: int, colors: array<int, array<string, string>>, lists: array<int, list<string>>, money: list<int>,
+     *     centered: list<int>, dates: list<int>, sections: list<array{int, int, string}>}  $style  by column index:
+     *     colors = cell text => background "#rrggbb", lists = dropdown choices (other values still allowed), money = ₱1,234.50
+     *     right-aligned, centered, dates = 03/10/2026, sections = [first, last, header colour]; the rest sits top-left
      */
-    public function styleTabs(array $tabs, array $colors, array $lists, array $money = []): void
+    public function styleTabs(array $tabs, array $style): void
     {
-        $sheets = collect($this->http()->get(self::API.$this->spreadsheetId, ['fields' => 'sheets(properties(sheetId,title),conditionalFormats)'])->throw()->json('sheets'))
+        $sheets = collect($this->http()->get(self::API.$this->spreadsheetId, ['fields' => 'sheets(properties(sheetId,title),conditionalFormats,bandedRanges.bandedRangeId)'])->throw()->json('sheets'))
             ->keyBy('properties.title');
+        $rgb = function (string $hex) {
+            [$r, $g, $b] = sscanf($hex, '#%02x%02x%02x');
+
+            return ['red' => $r / 255, 'green' => $g / 255, 'blue' => $b / 255];
+        };
         $requests = [];
         foreach ($tabs as $tab) {
             if (! $sheet = $sheets->get($tab)) {
@@ -265,32 +270,57 @@ class GoogleSheet
             }
             $id = $sheet['properties']['sheetId'];
             $column = fn (int $col) => ['sheetId' => $id, 'startRowIndex' => 1, 'startColumnIndex' => $col, 'endColumnIndex' => $col + 1];
+            $format = fn (array $range, array $format, string $fields) => ['repeatCell' => ['range' => $range, 'cell' => ['userEnteredFormat' => $format], 'fields' => "userEnteredFormat({$fields})"]];
+
             foreach (array_reverse($sheet['conditionalFormats'] ?? [], true) as $i => $rule) {
                 $text = $rule['booleanRule']['condition']['values'][0]['userEnteredValue'] ?? null;
-                if (isset($colors[$rule['ranges'][0]['startColumnIndex'] ?? -1][$text])) {
+                if (isset($style['colors'][$rule['ranges'][0]['startColumnIndex'] ?? -1][$text])) {
                     $requests[] = ['deleteConditionalFormatRule' => ['sheetId' => $id, 'index' => $i]];
                 }
             }
-            foreach ($colors as $col => $map) {
+            foreach ($sheet['bandedRanges'] ?? [] as $band) {
+                $requests[] = ['deleteBanding' => ['bandedRangeId' => $band['bandedRangeId']]];
+            }
+            foreach ($style['colors'] as $col => $map) {
                 foreach ($map as $text => $hex) {
-                    [$r, $g, $b] = sscanf($hex, '#%02x%02x%02x');
                     $requests[] = ['addConditionalFormatRule' => ['index' => 0, 'rule' => [
                         'ranges' => [$column($col)],
-                        'booleanRule' => [
-                            'condition' => ['type' => 'TEXT_EQ', 'values' => [['userEnteredValue' => $text]]],
-                            'format' => ['backgroundColor' => ['red' => $r / 255, 'green' => $g / 255, 'blue' => $b / 255]],
-                        ],
+                        'booleanRule' => ['condition' => ['type' => 'TEXT_EQ', 'values' => [['userEnteredValue' => $text]]], 'format' => ['backgroundColor' => $rgb($hex)]],
                     ]]];
                 }
             }
-            foreach ($money as $col) {
-                $requests[] = ['repeatCell' => [
-                    'range' => $column($col),
-                    'cell' => ['userEnteredFormat' => ['numberFormat' => ['type' => 'CURRENCY', 'pattern' => '"₱"#,##0.00']]],
-                    'fields' => 'userEnteredFormat.numberFormat',
-                ]];
+
+            // Every cell top-left and wrapped (some hold one DR / SI per line), then the exceptions.
+            $requests[] = $format(['sheetId' => $id], ['verticalAlignment' => 'TOP', 'horizontalAlignment' => 'LEFT', 'wrapStrategy' => 'WRAP'], 'verticalAlignment,horizontalAlignment,wrapStrategy');
+            foreach ($style['money'] as $col) {
+                $requests[] = $format($column($col), ['numberFormat' => ['type' => 'CURRENCY', 'pattern' => '"₱"#,##0.00'], 'horizontalAlignment' => 'RIGHT'], 'numberFormat,horizontalAlignment');
             }
-            foreach ($lists as $col => $values) {
+            foreach ($style['dates'] as $col) {
+                $requests[] = $format($column($col), ['numberFormat' => ['type' => 'DATE', 'pattern' => 'mm/dd/yyyy']], 'numberFormat');
+            }
+            foreach ($style['centered'] as $col) {
+                $requests[] = $format($column($col), ['horizontalAlignment' => 'CENTER'], 'horizontalAlignment');
+            }
+
+            // Header: white bold on a colour per section (PO, DR, SI, payment), a little taller.
+            foreach ($style['sections'] as [$from, $to, $hex]) {
+                $requests[] = $format(
+                    ['sheetId' => $id, 'startRowIndex' => 0, 'endRowIndex' => 1, 'startColumnIndex' => $from, 'endColumnIndex' => $to + 1],
+                    ['backgroundColor' => $rgb($hex), 'verticalAlignment' => 'MIDDLE', 'textFormat' => ['bold' => true, 'foregroundColor' => $rgb('#ffffff')]],
+                    'backgroundColor,verticalAlignment,textFormat',
+                );
+            }
+            $requests[] = ['updateDimensionProperties' => ['range' => ['sheetId' => $id, 'dimension' => 'ROWS', 'startIndex' => 0, 'endIndex' => 1], 'properties' => ['pixelSize' => 36], 'fields' => 'pixelSize']];
+
+            // Header and company stay put when scrolling; rows in alternating shades; a filter on the header.
+            $requests[] = ['updateSheetProperties' => ['properties' => ['sheetId' => $id, 'gridProperties' => ['frozenRowCount' => 1, 'frozenColumnCount' => 1]], 'fields' => 'gridProperties(frozenRowCount,frozenColumnCount)']];
+            $requests[] = ['addBanding' => ['bandedRange' => [
+                'range' => ['sheetId' => $id, 'startRowIndex' => 1, 'startColumnIndex' => 0, 'endColumnIndex' => $style['columns']],
+                'rowProperties' => ['firstBandColor' => $rgb('#ffffff'), 'secondBandColor' => $rgb('#f3f4f6')],
+            ]]];
+            $requests[] = ['setBasicFilter' => ['filter' => ['range' => ['sheetId' => $id, 'startRowIndex' => 0, 'startColumnIndex' => 0, 'endColumnIndex' => $style['columns']]]]];
+
+            foreach ($style['lists'] as $col => $values) {
                 $requests[] = ['setDataValidation' => ['range' => $column($col), 'rule' => [
                     'condition' => ['type' => 'ONE_OF_LIST', 'values' => array_map(fn ($v) => ['userEnteredValue' => $v], $values)],
                     'showCustomUi' => true,
@@ -303,17 +333,87 @@ class GoogleSheet
         }
     }
 
-    /** Widens (or narrows) the first $count columns of these tabs to fit what is in them. */
-    public function fitColumns(array $tabs, int $count): void
+    /**
+     * Replaces everything in a tab with these rows (the first is the header). A missing tab is made as the first tab,
+     * with its header bold and frozen, ₱ / date columns, and whole rows coloured by a flag column's text.
+     *
+     * @param  array{money: list<int>, dates: list<int>, flag: array{int, array<string, string>}}  $style  by column index
+     */
+    public function fillTab(string $tab, array $rows, array $style): void
     {
-        $ids = collect($this->http()->get(self::API.$this->spreadsheetId, ['fields' => 'sheets.properties(sheetId,title)'])->throw()->json('sheets'))
-            ->mapWithKeys(fn ($s) => [$s['properties']['title'] => $s['properties']['sheetId']]);
-        $requests = collect($tabs)->filter(fn ($tab) => isset($ids[$tab]))->map(fn ($tab) => ['autoResizeDimensions' => [
-            'dimensions' => ['sheetId' => $ids[$tab], 'dimension' => 'COLUMNS', 'startIndex' => 0, 'endIndex' => $count],
-        ]])->values()->all();
-        if ($requests) {
-            $this->http()->post(self::API.$this->spreadsheetId.':batchUpdate', ['requests' => $requests])->throw();
+        $url = self::API.$this->spreadsheetId;
+        $props = collect($this->http()->get($url, ['fields' => 'sheets.properties'])->throw()->json('sheets'))
+            ->pluck('properties')->first(fn ($p) => mb_strtolower($p['title']) === mb_strtolower($tab));
+        $requests = [];
+        if (! $props) {
+            $props = $this->http()->post($url.':batchUpdate', ['requests' => [['addSheet' => ['properties' => ['title' => $tab, 'index' => 0]]]]])
+                ->throw()->json('replies.0.addSheet.properties');
+            $id = $props['sheetId'];
+            $column = fn (int $col) => ['sheetId' => $id, 'startRowIndex' => 1, 'startColumnIndex' => $col, 'endColumnIndex' => $col + 1];
+            $requests[] = ['updateSheetProperties' => ['properties' => ['sheetId' => $id, 'gridProperties' => ['frozenRowCount' => 1]], 'fields' => 'gridProperties.frozenRowCount']];
+            $requests[] = ['repeatCell' => ['range' => ['sheetId' => $id, 'startRowIndex' => 0, 'endRowIndex' => 1], 'cell' => ['userEnteredFormat' => ['textFormat' => ['bold' => true]]], 'fields' => 'userEnteredFormat.textFormat.bold']];
+            $requests[] = ['repeatCell' => ['range' => ['sheetId' => $id], 'cell' => ['userEnteredFormat' => ['horizontalAlignment' => 'LEFT']], 'fields' => 'userEnteredFormat.horizontalAlignment']];
+            foreach ($style['money'] as $col) {
+                $requests[] = ['repeatCell' => ['range' => $column($col), 'cell' => ['userEnteredFormat' => ['numberFormat' => ['type' => 'CURRENCY', 'pattern' => '"₱"#,##0.00'], 'horizontalAlignment' => 'RIGHT']], 'fields' => 'userEnteredFormat(numberFormat,horizontalAlignment)']];
+            }
+            foreach ($style['dates'] as $col) {
+                $requests[] = ['repeatCell' => ['range' => $column($col), 'cell' => ['userEnteredFormat' => ['numberFormat' => ['type' => 'DATE', 'pattern' => 'mm/dd/yyyy']]], 'fields' => 'userEnteredFormat.numberFormat']];
+            }
+            [$flagCol, $colors] = $style['flag'];
+            $letter = chr(65 + $flagCol);
+            foreach ($colors as $text => $hex) {
+                [$r, $g, $b] = sscanf($hex, '#%02x%02x%02x');
+                $requests[] = ['addConditionalFormatRule' => ['index' => 0, 'rule' => [
+                    'ranges' => [['sheetId' => $id, 'startRowIndex' => 1, 'startColumnIndex' => 0, 'endColumnIndex' => count($rows[0])]],
+                    'booleanRule' => [
+                        'condition' => ['type' => 'CUSTOM_FORMULA', 'values' => [['userEnteredValue' => "=\${$letter}2=\"{$text}\""]]],
+                        'format' => ['backgroundColor' => ['red' => $r / 255, 'green' => $g / 255, 'blue' => $b / 255]],
+                    ],
+                ]]];
+            }
         }
+        // Room for every row (writing past the grid is refused), then the old cells cleared and the new ones written.
+        $requests[] = ['updateSheetProperties' => ['properties' => ['sheetId' => $props['sheetId'], 'gridProperties' => ['rowCount' => max(count($rows) + 20, 100)]], 'fields' => 'gridProperties.rowCount']];
+        $this->http()->post($url.':batchUpdate', ['requests' => $requests])->throw();
+        $this->http()->post($url.'/values:batchClear', ['ranges' => [self::range($props['title'], 'A:Z')]])->throw();
+        $this->http()->put($url.'/values/'.rawurlencode(self::range($props['title'], 'A1')).'?valueInputOption=USER_ENTERED', [
+            'values' => array_map(fn ($row) => array_map(fn ($v) => $v ?? '', $row), $rows),
+        ])->throw();
+        $this->fitColumns([$props['title']], $rows[0]);
+    }
+
+    /**
+     * Fits the header columns of these tabs to what is in them. Google's auto-fit measures text as if not bold, so the
+     * bold headers would be cut off: each column is then made at least as wide as its header, plus some room, and at
+     * most 280px (longer names wrap).
+     */
+    public function fitColumns(array $tabs, array $headers): void
+    {
+        $url = self::API.$this->spreadsheetId;
+        $ids = collect($this->http()->get($url, ['fields' => 'sheets.properties(sheetId,title)'])->throw()->json('sheets'))
+            ->mapWithKeys(fn ($s) => [$s['properties']['title'] => $s['properties']['sheetId']])
+            ->only($tabs);
+        if ($ids->isEmpty()) {
+            return;
+        }
+        $this->http()->post($url.':batchUpdate', ['requests' => $ids->map(fn ($id) => ['autoResizeDimensions' => [
+            'dimensions' => ['sheetId' => $id, 'dimension' => 'COLUMNS', 'startIndex' => 0, 'endIndex' => count($headers)],
+        ]])->values()->all()])->throw();
+
+        $widths = collect($this->http()->get($url, ['fields' => 'sheets(properties.title,data.columnMetadata.pixelSize)'])->throw()->json('sheets'))
+            ->mapWithKeys(fn ($s) => [$s['properties']['title'] => array_column($s['data'][0]['columnMetadata'] ?? [], 'pixelSize')]);
+        $requests = [];
+        foreach ($ids as $tab => $id) {
+            foreach (array_values($headers) as $i => $header) {
+                $requests[] = ['updateDimensionProperties' => [
+                    'range' => ['sheetId' => $id, 'dimension' => 'COLUMNS', 'startIndex' => $i, 'endIndex' => $i + 1],
+                    // ponytail: ~9px a bold capital at the default font; measure text if fonts change
+                    'properties' => ['pixelSize' => min(max(($widths[$tab][$i] ?? 100) + 24, mb_strlen($header) * 9 + 28), 280)],
+                    'fields' => 'pixelSize',
+                ]];
+            }
+        }
+        $this->http()->post($url.':batchUpdate', ['requests' => $requests])->throw();
     }
 
     public static function looksLikeDate(mixed $shown): bool

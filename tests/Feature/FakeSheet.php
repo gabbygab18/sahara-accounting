@@ -81,16 +81,25 @@ class FakeSheet extends GoogleSheet
 
     public array $styled = [];
 
-    public function styleTabs(array $tabs, array $colors, array $lists, array $money = []): void
+    public function styleTabs(array $tabs, array $style): void
     {
         $this->styled = [...$this->styled, ...$tabs];
     }
 
     public array $fitted = [];
 
-    public function fitColumns(array $tabs, int $count): void
+    public function fitColumns(array $tabs, array $headers): void
     {
         $this->fitted = [...$this->fitted, ...$tabs];
+    }
+
+    public function fillTab(string $tab, array $rows, array $style): void
+    {
+        $this->tabs = [$tab => [], ...$this->tabs]; // like Sheets: made as the first tab
+        $this->tabs[$tab] = [];
+        foreach (array_values($rows) as $i => $row) {
+            $this->tabs[$tab][$i + 1] = array_values($row);
+        }
     }
 
     /** Like Sheets: the rows below move up. */

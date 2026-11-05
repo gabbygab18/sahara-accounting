@@ -78,7 +78,7 @@ class SheetSyncTest extends TestCase
         $a = Record::create(['company' => 'Cityland', 'amount' => 1]);
         $b = Record::create(['company' => "Megaworld's", 'amount' => 2]);
         $this->sync();
-        $this->assertSame(['RECORDS', 'Notes', 'Cityland', "Megaworld's"], $this->sheet->tabs());
+        $this->assertSame(['SI MASTER', 'RECORDS', 'Notes', 'Cityland', "Megaworld's"], $this->sheet->tabs());
         $this->assertSame(2, Record::count());
 
         // Group changed in the app: the row leaves the old tab for the new one (same tab, any case).
@@ -140,6 +140,28 @@ class SheetSyncTest extends TestCase
         $this->sheet->fitted = [];
         $this->sync(); // nothing changed: no writes, no resize
         $this->assertSame([], $this->sheet->fitted);
+    }
+
+    public function test_the_si_master_lists_every_number_in_order_with_the_missing_ones()
+    {
+        $si = fn (string $n, float $amount) => ['date' => '2026-10-16', 'number' => $n, 'amount' => $amount];
+        Record::create(['company' => 'A', 'sold_to' => 'Uptown', 'sis' => [$si('10', 100), $si('13', 50)]]);
+        Record::create(['company' => 'B', 'sis' => [$si('11', 20)]]);
+        Record::create(['company' => 'B', 'sis' => [$si('13', 5), $si('C-1', 1)]]); // 13 twice; not a number: left out
+        $this->sync();
+
+        $master = $this->sheet->tabs['SI MASTER'];
+        $this->assertSame('SI #', $master[1][0]);
+        $this->assertSame(['10', '11', '12', '13', '13'], array_map(fn ($row) => (string) $row[0], array_slice($master, 1)));
+        $this->assertEquals(['10', '2026-10-16', 'A', 'Uptown', null, 100, 'Unpaid', ''], array_map(fn ($v) => $v instanceof \DateTimeInterface ? $v->format('Y-m-d') : $v, $master[2]));
+        $this->assertSame('Missing', $master[4][7]);
+        $this->assertSame(['Duplicate', 'Duplicate'], [$master[5][7], $master[6][7]]);
+        $this->assertCount(3, Record::all()); // never read back as records
+
+        // A group named like it gets its own tab.
+        Record::create(['company' => 'si master', 'amount' => 1]);
+        $this->sync();
+        $this->assertArrayHasKey('si master (group)', $this->sheet->tabs);
     }
 
     public function test_an_app_edit_made_during_a_sync_is_not_lost()
