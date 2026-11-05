@@ -1,5 +1,4 @@
 'use client';
-/* eslint-disable @next/next/no-img-element */
 
 import { cn } from '@/lib/utils';
 import { useState, type HTMLAttributes } from 'react';
