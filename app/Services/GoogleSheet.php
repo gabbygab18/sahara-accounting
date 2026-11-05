@@ -335,38 +335,27 @@ class GoogleSheet
 
     /**
      * Replaces everything in a tab with these rows (the first is the header). A missing tab is made as the first tab,
-     * with its header bold and frozen, ₱ / date columns, and whole rows coloured by a flag column's text.
+     * with whole rows coloured by the text in one column. The rest of its look comes from styleTabs.
      *
-     * @param  array{money: list<int>, dates: list<int>, flag: array{int, array<string, string>}}  $style  by column index
+     * @param  array{int, array<string, string>}  $flag  [column index, cell text => row background "#rrggbb"]
+     * @return bool whether the tab was made
      */
-    public function fillTab(string $tab, array $rows, array $style): void
+    public function fillTab(string $tab, array $rows, array $flag): bool
     {
         $url = self::API.$this->spreadsheetId;
         $props = collect($this->http()->get($url, ['fields' => 'sheets.properties'])->throw()->json('sheets'))
             ->pluck('properties')->first(fn ($p) => mb_strtolower($p['title']) === mb_strtolower($tab));
         $requests = [];
-        if (! $props) {
+        if ($made = ! $props) {
             $props = $this->http()->post($url.':batchUpdate', ['requests' => [['addSheet' => ['properties' => ['title' => $tab, 'index' => 0]]]]])
                 ->throw()->json('replies.0.addSheet.properties');
-            $id = $props['sheetId'];
-            $column = fn (int $col) => ['sheetId' => $id, 'startRowIndex' => 1, 'startColumnIndex' => $col, 'endColumnIndex' => $col + 1];
-            $requests[] = ['updateSheetProperties' => ['properties' => ['sheetId' => $id, 'gridProperties' => ['frozenRowCount' => 1]], 'fields' => 'gridProperties.frozenRowCount']];
-            $requests[] = ['repeatCell' => ['range' => ['sheetId' => $id, 'startRowIndex' => 0, 'endRowIndex' => 1], 'cell' => ['userEnteredFormat' => ['textFormat' => ['bold' => true]]], 'fields' => 'userEnteredFormat.textFormat.bold']];
-            $requests[] = ['repeatCell' => ['range' => ['sheetId' => $id], 'cell' => ['userEnteredFormat' => ['horizontalAlignment' => 'LEFT']], 'fields' => 'userEnteredFormat.horizontalAlignment']];
-            foreach ($style['money'] as $col) {
-                $requests[] = ['repeatCell' => ['range' => $column($col), 'cell' => ['userEnteredFormat' => ['numberFormat' => ['type' => 'CURRENCY', 'pattern' => '"₱"#,##0.00'], 'horizontalAlignment' => 'RIGHT']], 'fields' => 'userEnteredFormat(numberFormat,horizontalAlignment)']];
-            }
-            foreach ($style['dates'] as $col) {
-                $requests[] = ['repeatCell' => ['range' => $column($col), 'cell' => ['userEnteredFormat' => ['numberFormat' => ['type' => 'DATE', 'pattern' => 'mm/dd/yyyy']]], 'fields' => 'userEnteredFormat.numberFormat']];
-            }
-            [$flagCol, $colors] = $style['flag'];
-            $letter = chr(65 + $flagCol);
+            [$col, $colors] = $flag;
             foreach ($colors as $text => $hex) {
                 [$r, $g, $b] = sscanf($hex, '#%02x%02x%02x');
                 $requests[] = ['addConditionalFormatRule' => ['index' => 0, 'rule' => [
-                    'ranges' => [['sheetId' => $id, 'startRowIndex' => 1, 'startColumnIndex' => 0, 'endColumnIndex' => count($rows[0])]],
+                    'ranges' => [['sheetId' => $props['sheetId'], 'startRowIndex' => 1, 'startColumnIndex' => 0, 'endColumnIndex' => count($rows[0])]],
                     'booleanRule' => [
-                        'condition' => ['type' => 'CUSTOM_FORMULA', 'values' => [['userEnteredValue' => "=\${$letter}2=\"{$text}\""]]],
+                        'condition' => ['type' => 'CUSTOM_FORMULA', 'values' => [['userEnteredValue' => '=$'.chr(65 + $col).'2="'.$text.'"']]],
                         'format' => ['backgroundColor' => ['red' => $r / 255, 'green' => $g / 255, 'blue' => $b / 255]],
                     ],
                 ]]];
@@ -379,7 +368,8 @@ class GoogleSheet
         $this->http()->put($url.'/values/'.rawurlencode(self::range($props['title'], 'A1')).'?valueInputOption=USER_ENTERED', [
             'values' => array_map(fn ($row) => array_map(fn ($v) => $v ?? '', $row), $rows),
         ])->throw();
-        $this->fitColumns([$props['title']], $rows[0]);
+
+        return $made;
     }
 
     /**

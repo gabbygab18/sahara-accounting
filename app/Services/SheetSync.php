@@ -253,10 +253,26 @@ class SheetSync
         }
 
         $key = 'sheets-master:'.($this->sheet->spreadsheetId ?? '');
-        if (Cache::get($key) !== ($hash = md5(json_encode($rows)))) {
-            $this->sheet->fillTab(self::MASTER_TAB, $rows, ['money' => [5], 'dates' => [1], 'flag' => [7, ['Missing' => '#f4c7c3', 'Duplicate' => '#fce8b2']]]);
-            Cache::forever($key, $hash);
+        $styled = 'sheets-styled-master-v1:'.($this->sheet->spreadsheetId ?? '');
+        if (Cache::get($key) === ($hash = md5(json_encode($rows))) && Cache::has($styled)) {
+            return;
         }
+        $made = $this->sheet->fillTab(self::MASTER_TAB, $rows, [7, ['Missing' => '#f4c7c3', 'Duplicate' => '#fce8b2']]);
+        // The same look as the group tabs: SI in amber, who in slate, payment in violet; Paid green, Unpaid red.
+        if ($made || ! Cache::has($styled)) {
+            $this->sheet->styleTabs([self::MASTER_TAB], [
+                'columns' => count($rows[0]),
+                'colors' => [6 => Record::PAYMENT],
+                'lists' => [],
+                'money' => [5],
+                'centered' => [],
+                'dates' => [1],
+                'sections' => [[0, 1, '#b45309'], [2, 4, '#334155'], [5, 5, '#b45309'], [6, 7, '#6d28d9']],
+            ]);
+            Cache::forever($styled, true);
+        }
+        $this->sheet->fitColumns([self::MASTER_TAB], $rows[0]);
+        Cache::forever($key, $hash);
     }
 
     /** A record's row in its group's tab: every column but the group. */

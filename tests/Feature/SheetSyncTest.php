@@ -32,6 +32,12 @@ class SheetSyncTest extends TestCase
         return "'{$tab}'!".chr(64 + array_search($field, array_keys(Record::COLUMNS), true)).$row;
     }
 
+    /** Group tabs only, without the SI master. */
+    private function groupTabs(array $tabs): array
+    {
+        return array_values(array_diff($tabs, [SheetSync::MASTER_TAB]));
+    }
+
     protected function setUp(): void
     {
         parent::setUp();
@@ -49,7 +55,7 @@ class SheetSyncTest extends TestCase
         $this->assertSame('Pines Peak Towers', $this->cell('Cityland', 2, 'sold_to'));
         $this->assertSame('Unpaid', $this->cell('Cityland', 2, 'paid'));
         $this->assertFalse($app->fresh()->pending_sync);
-        $this->assertSame(['Cityland'], $this->sheet->styled); // paid green, unpaid red, once
+        $this->assertSame(['Cityland'], $this->groupTabs($this->sheet->styled)); // paid green, unpaid red, once
 
         // Typed in the group's tab: becomes a record of that group and gets its SYNC ID.
         $this->sheet->write([$this->at('Cityland', 3, 'sold_to') => ['Uptown', '', '', '', '', '', '', 'pending', '2026-10-20', '77', '2,500', '15', '', 'Unpaid']]);
@@ -66,7 +72,7 @@ class SheetSyncTest extends TestCase
         $app->fresh()->fill(['sis' => [['date' => '2026-10-16', 'number' => '1', 'amount' => 120]], 'pending_sync' => true])->save();
         $this->sync();
         $this->assertSame(120.0, $this->cell('Cityland', 2, 'amount'));
-        $this->assertSame(['Cityland'], $this->sheet->styled);
+        $this->assertSame(['Cityland'], $this->groupTabs($this->sheet->styled));
         $this->assertSame('OR-9', $this->cell('Cityland', 2, 'or_number'));
     }
 
@@ -127,7 +133,7 @@ class SheetSyncTest extends TestCase
     {
         $r = Record::create(['company' => 'A', 'sold_to' => 'Uptown', 'check_number' => 'BDO 123456', 'amount' => 5]);
         $this->sync();
-        $this->assertSame(['A'], $this->sheet->fitted); // widths fit the cells
+        $this->assertSame(['A'], $this->groupTabs($this->sheet->fitted)); // widths fit the cells
 
         // An older version's headers, and its row one column off.
         $this->sheet->tabs['A'][1] = ['COMPANY (SOLD TO)', 'OLD', 25 => 'SYNC ID'];
@@ -157,6 +163,8 @@ class SheetSyncTest extends TestCase
         $this->assertSame('Missing', $master[4][7]);
         $this->assertSame(['Duplicate', 'Duplicate'], [$master[5][7], $master[6][7]]);
         $this->assertCount(3, Record::all()); // never read back as records
+        $this->assertContains('SI MASTER', $this->sheet->styled);
+        $this->assertContains('SI MASTER', $this->sheet->fitted);
 
         // A group named like it gets its own tab.
         Record::create(['company' => 'si master', 'amount' => 1]);
