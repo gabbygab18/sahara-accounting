@@ -151,6 +151,17 @@ class RecordTest extends TestCase
             ->where('uncleared.count', 1)->where('uncleared.rows.0.check_number', 'BDO 1')
             ->where('skipped.si', null)); // until the booklet's first number is set
 
+        $this->get('/dashboard')->assertInertia(fn ($page) => $page
+            ->where('debtors.0.name', 'Pines Peak Towers')->where('debtors.0.unpaid', 444.45)->where('debtors.0.days', 33) // SI Oct 16, OR Nov 18
+            ->where('trend.11', ['month' => '2026-11', 'billed' => 50, 'collected' => 1000])->where('trend.10.billed', 1394.45)
+            ->where('notInvoiced.count', 0)->where('noDue.count', 0));
+        // Filtered by group; the age groups open in Records.
+        $this->get('/dashboard?company=Megaworld')->assertInertia(fn ($page) => $page->where('totals.unpaid', 50)->where('totals.count', 1));
+        $this->get('/records?show=1-30')->assertInertia(fn ($page) => $page->where('records.total', 1)->where('show', '1–30 days late'));
+        Record::create(['company' => 'A', 'drs' => [['date' => '2026-11-01', 'number' => '55', 'status' => 'Delivered']]]);
+        $this->get('/dashboard')->assertInertia(fn ($page) => $page->where('notInvoiced.count', 1)->where('notInvoiced.rows.0.days', 19)->where('noDue.count', 1));
+        $this->get('/records?show=not-invoiced')->assertInertia(fn ($page) => $page->where('records.total', 1));
+
         // Backlog below the booklet's first number is not counted.
         $this->patch('/dashboard/booklet', ['si' => 194652])->assertRedirect();
         $this->get('/dashboard')->assertInertia(fn ($page) => $page

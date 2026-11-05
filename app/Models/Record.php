@@ -157,6 +157,43 @@ class Record extends Model
         return ! $this->paid ? 'unpaid' : ($this->paid_confirmed ? 'paid' : 'checking');
     }
 
+    /**
+     * Unpaid invoices by how late: key => [label, first day late, last day late]. "no-due" has no SI date or terms,
+     * so no due date: those can't be chased until filled in.
+     */
+    public const AGING = [
+        'not-due' => ['Not yet due', PHP_INT_MIN, 0],
+        '1-30' => ['1–30 days late', 1, 30],
+        '31-60' => ['31–60 days late', 31, 60],
+        '61-90' => ['61–90 days late', 61, 90],
+        '90+' => ['Over 90 days late', 91, PHP_INT_MAX],
+        'no-due' => ['No due date', null, null],
+    ];
+
+    /** Days past the due date: negative while there is time left, null without an SI date and terms. */
+    public function daysLate(): ?int
+    {
+        return ($due = $this->dueOn()) ? (int) $due->diffInDays(today(), false) : null;
+    }
+
+    /** Its AGING key while unpaid, else null. */
+    public function age(): ?string
+    {
+        if ($this->paid) {
+            return null;
+        }
+        if (($late = $this->daysLate()) === null) {
+            return 'no-due';
+        }
+        foreach (self::AGING as $key => [, $from, $to]) {
+            if ($from !== null && $late >= $from && $late <= $to) {
+                return $key;
+            }
+        }
+
+        return null;
+    }
+
     public function isOverdue(): bool
     {
         return ! $this->paid && ($due = $this->dueOn()) && $due->lt(today());

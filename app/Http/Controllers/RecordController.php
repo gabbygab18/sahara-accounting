@@ -16,7 +16,10 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 /** Records: the tracker itself. Add, edit, delete, search, filter and export. */
 class RecordController extends Controller
 {
-    private const FILTERS = ['q', 'company', 'project', 'delivery', 'payment', 'from', 'to'];
+    private const FILTERS = ['q', 'company', 'project', 'delivery', 'payment', 'from', 'to', 'show'];
+
+    /** ?show= lists from the summary: an unpaid age group (Record::AGING), or delivered but not yet invoiced. */
+    public const SHOWS = ['not-invoiced' => 'Delivered, not yet invoiced'];
 
     public function index(Request $request): Response
     {
@@ -34,6 +37,7 @@ class RecordController extends Controller
                 'unpaid' => round((float) (clone $filtered)->where('paid', false)->sum('amount'), 2),
             ],
             'filters' => $request->only(self::FILTERS),
+            'show' => self::SHOWS[$request->show] ?? (Record::AGING[$request->show][0] ?? null),
             'options' => $this->options(),
         ]);
     }
@@ -131,7 +135,11 @@ class RecordController extends Controller
             ->when($request->payment === 'unpaid', fn ($q) => $q->where('paid', false))
             // Dated by the invoice, or by the DR while there is no invoice yet.
             ->when($request->from, fn ($q, $d) => $q->whereRaw('COALESCE(si_date, dr_date) >= ?', [$d]))
-            ->when($request->to, fn ($q, $d) => $q->whereRaw('COALESCE(si_date, dr_date) <= ?', [$d]));
+            ->when($request->to, fn ($q, $d) => $q->whereRaw('COALESCE(si_date, dr_date) <= ?', [$d]))
+            ->when($request->show === 'not-invoiced', fn ($q) => $q->whereNotNull('dr_number')->whereNull('si_number'))
+            // ponytail: due dates are worked out in PHP (date maths differs per SQL dialect); fine into the tens of thousands
+            ->when(isset(Record::AGING[$request->show]), fn ($q) => $q->whereIn('id', Record::where('paid', false)
+                ->get(['id', 'paid', 'si_date', 'terms_days'])->filter(fn ($r) => $r->age() === $request->show)->modelKeys()));
     }
 
     /** For the filters and the form: groups (with their latest TIN), sold-to companies and projects per group, delivery statuses. */

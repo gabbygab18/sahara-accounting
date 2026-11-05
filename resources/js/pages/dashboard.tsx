@@ -1,11 +1,14 @@
+import { DatePicker } from '@/components/date-picker';
 import { Button } from '@/components/glint/button';
 import { Input } from '@/components/glint/input';
+import { Select } from '@/components/glint/select';
 import { AlarmClock, Eye, Receipt, TrendingUp, Wallet } from '@/icons';
 import AppLayout from '@/layouts/app-layout';
 import { fmt, peso, prettyDate } from '@/lib/records';
 import { cn } from '@/lib/utils';
 import { type BreadcrumbItem } from '@/types';
-import { Link, useForm } from '@inertiajs/react';
+import { Link, router, useForm } from '@inertiajs/react';
+import { useState } from 'react';
 
 const breadcrumbs: BreadcrumbItem[] = [{ title: 'Summary', href: '/dashboard' }];
 
@@ -34,11 +37,25 @@ interface Gaps {
     ranges: { from: number; to: number }[];
 }
 
+type Filters = { company?: string; from?: string; to?: string };
+
+interface Month {
+    month: string;
+    billed: number;
+    collected: number;
+}
+
 interface Props {
+    filters: Filters;
+    groups: string[];
     totals: Sums;
     month: { billed: number; collected: number };
     checkingCount: number;
-    aging: { label: string; count: number; amount: number }[];
+    aging: { key: string; label: string; count: number; amount: number }[];
+    debtors: { name: string; group: string; unpaid: number; overdue: number; count: number; days: number | null }[];
+    trend: Month[];
+    notInvoiced: { count: number; rows: (Brief & { dr_date: string | null; days: number | null })[] };
+    noDue: { count: number; rows: (Brief & { missing: string })[] };
     collect: (Brief & { due: string; late: number })[];
     uncleared: { count: number; amount: number; rows: (Brief & { check_number: string | null; check_date: string | null })[] };
     skipped: { si: Gaps | null; dr: Gaps | null };
@@ -136,14 +153,165 @@ function Skipped({ doc, label, gaps }: { doc: 'si' | 'dr'; label: string; gaps: 
     );
 }
 
-const AGING_COLORS = ['bg-slate-300', 'bg-amber-400', 'bg-orange-500', 'bg-rose-500', 'bg-rose-800'];
+const AGING_COLORS = ['bg-teal-300', 'bg-amber-400', 'bg-orange-500', 'bg-rose-500', 'bg-rose-800', 'bg-slate-400'];
 
-export default function Dashboard({ totals, month, checkingCount, aging, collect, uncleared, skipped, companies }: Props) {
+const compact = (n: number) => '₱' + Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 }).format(n);
+
+/** The axis top: the next 1, 2 or 5 × 10ⁿ at or above the biggest bar. */
+const niceMax = (n: number) => {
+    const p = 10 ** Math.floor(Math.log10(Math.max(n, 1)));
+    return [1, 2, 5, 10].map((k) => k * p).find((v) => v >= n) ?? 10 * p;
+};
+
+const SERIES = [
+    { key: 'billed', label: 'Billed', cls: 'bg-blue-600 dark:bg-blue-500' },
+    { key: 'collected', label: 'Collected', cls: 'bg-emerald-600' },
+] as const;
+
+/** Billed vs collected per month: paired bars on one ₱ axis, a tooltip per month, and a table for screen readers. */
+function Trend({ months }: { months: Month[] }) {
+    const [hover, setHover] = useState<number | null>(null);
+    const top = niceMax(Math.max(...months.flatMap((m) => [m.billed, m.collected])));
+    const name = (m: string, i: number) => {
+        const d = new Date(`${m}-01T00:00`);
+        const short = d.toLocaleString('en-US', { month: 'short' });
+        // The year on the first month and on each January; wide screens only.
+        return i === 0 || d.getMonth() === 0 ? (
+            <>
+                {short}
+                <span className="hidden sm:inline"> ’{String(d.getFullYear()).slice(2)}</span>
+            </>
+        ) : (
+            short
+        );
+    };
+    const full = (m: string) => new Date(`${m}-01T00:00`).toLocaleString('en-US', { month: 'long', year: 'numeric' });
+
+    return (
+        <div>
+            <div className="mb-3 flex gap-4 text-xs">
+                {SERIES.map((s) => (
+                    <span key={s.key} className="text-muted-foreground flex items-center gap-1.5">
+                        <span className={cn('size-2.5 rounded-sm', s.cls)} /> {s.label}
+                    </span>
+                ))}
+            </div>
+            <div className="relative h-48 pl-12" aria-hidden data-chart>
+                {[0, 0.5, 1].map((f) => (
+                    <div key={f} className="absolute right-0 left-12 border-t border-dashed border-current/10" style={{ bottom: `${f * 100}%` }}>
+                        <span className="text-muted-foreground absolute -top-2 -left-12 w-10 text-right text-[10px] tabular-nums">
+                            {compact(top * f)}
+                        </span>
+                    </div>
+                ))}
+                <div className="absolute inset-y-0 right-0 left-12 flex items-end gap-1">
+                    {months.map((m, i) => (
+                        <div
+                            key={m.month}
+                            className="relative flex h-full flex-1 items-end justify-center gap-[2px]"
+                            onMouseEnter={() => setHover(i)}
+                            onMouseLeave={() => setHover(null)}
+                        >
+                            {SERIES.map((s) => (
+                                <span
+                                    key={s.key}
+                                    className={cn(
+                                        'w-full max-w-5 rounded-t-[4px] transition-opacity',
+                                        s.cls,
+                                        hover !== null && hover !== i && 'opacity-40',
+                                    )}
+                                    style={{ height: `${(m[s.key] / top) * 100}%` }}
+                                />
+                            ))}
+                            {hover === i && (
+                                <div
+                                    className={cn(
+                                        'bg-popover text-popover-foreground pointer-events-none absolute top-0 z-10 w-max rounded-lg border px-3 py-2 text-xs shadow-md',
+                                        i < 2 ? 'left-0' : i > months.length - 3 ? 'right-0' : 'left-1/2 -translate-x-1/2',
+                                    )}
+                                >
+                                    <p className="mb-1 font-semibold">{full(m.month)}</p>
+                                    {SERIES.map((s) => (
+                                        <p key={s.key} className="flex items-center gap-1.5">
+                                            <span className={cn('size-2 rounded-sm', s.cls)} />
+                                            <span className="text-muted-foreground">{s.label}</span>
+                                            <span className="ml-auto pl-3 font-medium tabular-nums">{peso(m[s.key])}</span>
+                                        </p>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            </div>
+            <div className="text-muted-foreground mt-1.5 flex gap-1 pl-12 text-[10px]" aria-hidden>
+                {months.map((m, i) => (
+                    // Every other month on a phone, so the names fit.
+                    <span
+                        key={m.month}
+                        className={cn(
+                            'flex flex-1 justify-center whitespace-nowrap',
+                            months.length > 6 && (months.length - 1 - i) % 2 === 1 && 'invisible sm:visible',
+                        )}
+                    >
+                        {name(m.month, i)}
+                    </span>
+                ))}
+            </div>
+            <table className="sr-only">
+                <caption>Billed and collected per month</caption>
+                <thead>
+                    <tr>
+                        <th>Month</th>
+                        <th>Billed</th>
+                        <th>Collected</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {months.map((m) => (
+                        <tr key={m.month}>
+                            <td>{full(m.month)}</td>
+                            <td>{peso(m.billed)}</td>
+                            <td>{peso(m.collected)}</td>
+                        </tr>
+                    ))}
+                </tbody>
+            </table>
+        </div>
+    );
+}
+
+const ALL = '__all';
+
+export default function Dashboard({
+    filters,
+    groups,
+    totals,
+    month,
+    checkingCount,
+    aging,
+    collect,
+    debtors,
+    trend,
+    notInvoiced,
+    noDue,
+    uncleared,
+    skipped,
+    companies,
+}: Props) {
+    const go = (params: Filters) =>
+        router.get('/dashboard', Object.fromEntries(Object.entries({ ...filters, ...params }).filter(([, v]) => v)), {
+            preserveState: true,
+            preserveScroll: true,
+            replace: true,
+        });
+    // Links into Records keep the summary's group and dates.
+    const scoped = (params: Record<string, string>) => records({ ...(filters as Record<string, string>), ...params });
     const tiles = [
         {
             label: 'Unpaid',
             value: totals.unpaid,
-            href: records({ payment: 'unpaid' }),
+            href: scoped({ payment: 'unpaid' }),
             icon: <Wallet />,
             cls: 'from-rose-400 to-rose-600 text-white',
             hint: totals.overdue ? `${peso(totals.overdue)} overdue` : 'Nothing overdue',
@@ -151,7 +319,7 @@ export default function Dashboard({ totals, month, checkingCount, aging, collect
         {
             label: 'For checking',
             value: totals.checking,
-            href: records({ payment: 'checking' }),
+            href: scoped({ payment: 'checking' }),
             icon: <Eye />,
             cls: 'from-sky-400 to-sky-600 text-white',
             hint: checkingCount ? `${plural(checkingCount, 'payment')} to confirm` : 'Nothing to confirm',
@@ -167,7 +335,7 @@ export default function Dashboard({ totals, month, checkingCount, aging, collect
         {
             label: 'Collected this month',
             value: month.collected,
-            href: records({ payment: 'paid' }),
+            href: scoped({ payment: 'paid' }),
             icon: <TrendingUp />,
             cls: 'from-emerald-400 to-emerald-600 text-white',
             hint: `${peso(month.billed)} billed this month`,
@@ -175,7 +343,7 @@ export default function Dashboard({ totals, month, checkingCount, aging, collect
         {
             label: 'Total billed',
             value: totals.paid + totals.checking + totals.unpaid,
-            href: '/records',
+            href: scoped({}),
             icon: <Receipt />,
             cls: 'from-slate-100 to-slate-200 text-slate-700',
             hint: `${fmt(totals.count)} records · ${peso(totals.paid)} paid`,
@@ -190,6 +358,29 @@ export default function Dashboard({ totals, month, checkingCount, aging, collect
 
     return (
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-12">
+            <div className="bg-card flex flex-wrap items-center gap-3 rounded-3xl p-4 shadow-sm xl:col-span-12">
+                <div className="w-full sm:w-56">
+                    <Select
+                        aria-label="Group"
+                        options={[{ value: ALL, label: 'All groups' }, ...groups.map((g) => ({ value: g, label: g }))]}
+                        value={filters.company ?? ALL}
+                        onValueChange={(v) => go({ company: v === ALL ? '' : v })}
+                    />
+                </div>
+                <div className="w-[calc(50%-0.375rem)] sm:w-44">
+                    <DatePicker value={filters.from ?? ''} onChange={(from) => go({ from })} placeholder="From date" clearable />
+                </div>
+                <div className="w-[calc(50%-0.375rem)] sm:w-44">
+                    <DatePicker value={filters.to ?? ''} onChange={(to) => go({ to })} placeholder="To date" clearable />
+                </div>
+                {(filters.company || filters.from || filters.to) && (
+                    <Button variant="ghost" size="sm" onClick={() => router.get('/dashboard', {}, { preserveScroll: true, replace: true })}>
+                        Clear
+                    </Button>
+                )}
+                <span className="text-muted-foreground ml-auto text-xs">By SI date (DR date when there is no SI yet)</span>
+            </div>
+
             <div className="grid grid-cols-2 gap-4 xl:col-span-12 xl:grid-cols-5">
                 {tiles.map((t) => {
                     const body = (
@@ -232,21 +423,105 @@ export default function Dashboard({ totals, month, checkingCount, aging, collect
             </Card>
 
             <Card className="min-w-0 xl:col-span-5">
-                <CardTitle hint="Unpaid invoices by how long past their terms.">Unpaid by age</CardTitle>
+                <CardTitle hint="Unpaid invoices by how long past their terms. Click one to see them.">Unpaid by age</CardTitle>
                 <div className="bg-muted mb-4 flex h-3 overflow-hidden rounded-full">
                     {aging.map((a, i) => (
                         <span key={a.label} className={AGING_COLORS[i]} style={{ width: `${(a.amount / unpaid) * 100}%` }} title={a.label} />
                     ))}
                 </div>
-                <ul className="space-y-2.5">
+                <ul className="space-y-0.5">
                     {aging.map((a, i) => (
-                        <li key={a.label} className="flex items-center gap-2.5 text-sm">
-                            <span className={cn('size-2.5 shrink-0 rounded-full', AGING_COLORS[i])} />
-                            <span className="flex-1">
-                                {a.label} <span className="text-muted-foreground text-xs">· {plural(a.count, 'invoice')}</span>
-                            </span>
-                            <span className={cn('font-semibold tabular-nums', i > 0 && a.amount > 0 && 'text-destructive')}>{peso(a.amount)}</span>
+                        <li key={a.key}>
+                            <Link
+                                prefetch
+                                href={scoped({ show: a.key })}
+                                className="hover:bg-muted/60 -mx-2 flex items-center gap-2.5 rounded-lg px-2 py-1.5 text-sm"
+                            >
+                                <span className={cn('size-2.5 shrink-0 rounded-full', AGING_COLORS[i])} />
+                                <span className="min-w-0 flex-1">
+                                    {a.label} <span className="text-muted-foreground text-xs">· {plural(a.count, 'invoice')}</span>
+                                </span>
+                                <span
+                                    className={cn(
+                                        'font-semibold tabular-nums',
+                                        a.key !== 'not-due' && a.key !== 'no-due' && a.amount > 0 && 'text-destructive',
+                                    )}
+                                >
+                                    {peso(a.amount)}
+                                </span>
+                            </Link>
                         </li>
+                    ))}
+                </ul>
+            </Card>
+
+            <Card className="min-w-0 xl:col-span-12">
+                <CardTitle hint="Billed by SI date, collected by OR date (or check date). Hover a month for its amounts.">
+                    Billed vs collected
+                </CardTitle>
+                <Trend months={trend} />
+            </Card>
+
+            <Card className="min-w-0 xl:col-span-7">
+                <CardTitle hint="Unpaid per company, and how many days they usually take to pay (SI date to OR date).">Who owes the most</CardTitle>
+                <ul className="divide-y">
+                    {debtors.length === 0 && <Empty>No one owes anything.</Empty>}
+                    {debtors.map((c) => (
+                        <li key={c.name}>
+                            <Link
+                                prefetch
+                                href={scoped({ q: c.name, payment: 'unpaid' })}
+                                className="hover:bg-muted/60 -mx-2 flex items-center gap-3 rounded-lg px-2 py-2"
+                            >
+                                <span className="min-w-0 flex-1">
+                                    <span className="block truncate text-sm font-medium">{c.name}</span>
+                                    <span className="text-muted-foreground block truncate text-[11px]">
+                                        {[
+                                            c.group !== c.name && c.group,
+                                            plural(c.count, 'unpaid invoice'),
+                                            c.days !== null && `usually pays in ${plural(c.days, 'day')}`,
+                                        ]
+                                            .filter(Boolean)
+                                            .join(' · ')}
+                                    </span>
+                                </span>
+                                <span className="shrink-0 text-right">
+                                    <span className="block text-sm font-semibold tabular-nums">{peso(c.unpaid)}</span>
+                                    {c.overdue > 0 && (
+                                        <span className="text-destructive block text-[11px] font-medium">{peso(c.overdue)} overdue</span>
+                                    )}
+                                </span>
+                            </Link>
+                        </li>
+                    ))}
+                </ul>
+            </Card>
+
+            <Card className="min-w-0 xl:col-span-5">
+                <CardTitle
+                    hint={
+                        <>
+                            Has a DR but no SI yet: goods out, not billed.{' '}
+                            {notInvoiced.count > 0 && (
+                                <Link href={scoped({ show: 'not-invoiced' })} className="text-primary font-medium hover:underline">
+                                    See all {fmt(notInvoiced.count)}
+                                </Link>
+                            )}
+                        </>
+                    }
+                >
+                    Delivered, not yet invoiced
+                </CardTitle>
+                <ul className="divide-y">
+                    {notInvoiced.rows.length === 0 && <Empty>Every delivery has its SI.</Empty>}
+                    {notInvoiced.rows.map((r) => (
+                        <Row
+                            key={r.id}
+                            r={r}
+                            sub={`${[r.sold_to, r.project].filter(Boolean).join(' · ') || 'No company'}${r.dr_date ? ` · delivered ${prettyDate(r.dr_date)}` : ''}`}
+                            note={r.days !== null ? `${plural(r.days, 'day')} ago` : 'No DR date'}
+                            noteCls={r.days !== null && r.days > 7 ? 'text-destructive' : 'text-amber-600'}
+                        />
                     ))}
                 </ul>
             </Card>
@@ -277,13 +552,42 @@ export default function Dashboard({ totals, month, checkingCount, aging, collect
                 </div>
             </Card>
 
-            <Card className="min-w-0 xl:col-span-12">
+            <Card className="min-w-0 xl:col-span-5">
+                <CardTitle
+                    hint={
+                        <>
+                            Unpaid, but no SI date or terms, so no due date: they never show as overdue.{' '}
+                            {noDue.count > 0 && (
+                                <Link href={scoped({ show: 'no-due' })} className="text-primary font-medium hover:underline">
+                                    See all {fmt(noDue.count)}
+                                </Link>
+                            )}
+                        </>
+                    }
+                >
+                    Missing details
+                </CardTitle>
+                <ul className="divide-y">
+                    {noDue.rows.length === 0 && <Empty>Every unpaid invoice has its SI date and terms.</Empty>}
+                    {noDue.rows.map((r) => (
+                        <Row
+                            key={r.id}
+                            r={r}
+                            sub={[r.sold_to, r.project].filter(Boolean).join(' · ') || 'No company'}
+                            note={`No ${r.missing}`}
+                            noteCls="text-amber-600"
+                        />
+                    ))}
+                </ul>
+            </Card>
+
+            <Card className="min-w-0 xl:col-span-7">
                 <CardTitle>Per group</CardTitle>
                 <ul className="divide-y">
                     {companies.length === 0 && <Empty>No records yet.</Empty>}
                     {companies.map((c) => (
                         <li key={c.company}>
-                            <Link prefetch href={records({ company: c.company })} className="hover:bg-muted/60 -mx-2 block rounded-lg px-2 py-2.5">
+                            <Link prefetch href={scoped({ company: c.company })} className="hover:bg-muted/60 -mx-2 block rounded-lg px-2 py-2.5">
                                 <span className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
                                     <span className="min-w-0 truncate font-medium">
                                         {c.company || '(no group)'}{' '}

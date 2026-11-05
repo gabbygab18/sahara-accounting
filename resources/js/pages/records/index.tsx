@@ -16,7 +16,7 @@ import { cn } from '@/lib/utils';
 import { router } from '@inertiajs/react';
 import { useEffect, useState } from 'react';
 
-type Filters = { q?: string; company?: string; project?: string; delivery?: string; payment?: string; from?: string; to?: string };
+type Filters = { q?: string; company?: string; project?: string; delivery?: string; payment?: string; from?: string; to?: string; show?: string };
 
 const PAYMENT: Record<string, string> = { All: '', Unpaid: 'unpaid', 'For checking': 'checking', Paid: 'paid' };
 const ALL = '__all';
@@ -28,7 +28,9 @@ export default function Records({
     totals,
     filters,
     options,
+    show,
 }: {
+    show: string | null;
     records: Paginated<AccountingRecord>;
     totals: { paid: number; checking: number; unpaid: number } | null;
     filters: Filters;
@@ -111,6 +113,15 @@ export default function Records({
                     <DatePicker value={filters.from ?? ''} onChange={(from) => go({ from })} placeholder="From date" clearable />
                     <DatePicker value={filters.to ?? ''} onChange={(to) => go({ to })} placeholder="To date" clearable />
                 </div>
+
+                {show && (
+                    <div className="bg-primary/10 flex flex-wrap items-center gap-2 rounded-2xl px-4 py-2.5 text-sm">
+                        Showing <b>{show}</b>
+                        <button type="button" className="text-primary ml-auto text-xs font-medium hover:underline" onClick={() => go({ show: '' })}>
+                            Show all
+                        </button>
+                    </div>
+                )}
 
                 <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-2xl border px-4 py-3 text-sm">
                     {totals ? (

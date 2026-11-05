@@ -6,13 +6,15 @@ use App\Models\Record;
 use App\Models\Setting;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Collection;
 use Inertia\Inertia;
 use Inertia\Response;
 
 /**
- * What needs doing: money to collect (by how late), payments to confirm, checks not yet cleared, skipped SI / DR numbers,
- * and paid / unpaid overall and per group.
+ * What needs doing: money to collect (by how late, by company), payments to confirm, checks not yet cleared, deliveries not
+ * yet invoiced, invoices missing their due date, skipped SI / DR numbers; billed vs collected per month; paid / unpaid
+ * overall and per group. Filtered by group and date.
  */
 class DashboardController extends Controller
 {
@@ -21,8 +23,14 @@ class DashboardController extends Controller
         if (! $request->user()->can('dashboard')) {
             return redirect($request->user()->home());
         }
+        $filters = $request->validate(['company' => ['nullable', 'string'], 'from' => ['nullable', 'date'], 'to' => ['nullable', 'date']]);
         // ponytail: every record loaded once and summed in PHP (due dates differ per SQL dialect); fine into the tens of thousands
-        $records = Record::get(['id', 'company', 'sold_to', 'project', 'si_number', 'dr_number', 'po_number', 'si_date', 'terms_days', 'amount', 'paid', 'paid_confirmed', 'check_number', 'check_date', 'check_cleared', 'or_date']);
+        $records = Record::query()
+            ->when($filters['company'] ?? null, fn ($q, $c) => $q->where('company', $c))
+            // Dated by the invoice, or by the DR while there is no invoice yet (as in Records).
+            ->when($filters['from'] ?? null, fn ($q, $d) => $q->whereRaw('COALESCE(si_date, dr_date) >= ?', [$d]))
+            ->when($filters['to'] ?? null, fn ($q, $d) => $q->whereRaw('COALESCE(si_date, dr_date) <= ?', [$d]))
+            ->get(['id', 'company', 'sold_to', 'project', 'si_number', 'dr_number', 'dr_date', 'po_number', 'si_date', 'terms_days', 'amount', 'paid', 'paid_confirmed', 'check_number', 'check_date', 'check_cleared', 'or_date']);
         $sum = fn ($rows) => [
             'count' => $rows->count(),
             'paid' => round($rows->filter(fn ($r) => $r->payment() === 'paid')->sum('amount'), 2),
@@ -31,44 +39,103 @@ class DashboardController extends Controller
             'overdue' => round($rows->filter->isOverdue()->sum('amount'), 2),
         ];
         $brief = fn (Record $r) => $r->only('id', 'company', 'sold_to', 'project', 'si_number', 'dr_number', 'po_number', 'amount');
-
-        // Days past the due date: negative while there is time left, null without an SI date and terms.
-        $late = fn (Record $r) => ($due = $r->dueOn()) ? (int) $due->diffInDays(today(), false) : null;
         $unpaid = $records->where('paid', false);
-        $aging = collect(['Not yet due' => [PHP_INT_MIN, 0], '1–30 days late' => [1, 30], '31–60 days late' => [31, 60], '61–90 days late' => [61, 90], 'Over 90 days late' => [91, PHP_INT_MAX]])
-            ->map(function ($range, $label) use ($unpaid, $late) {
-                $rows = $unpaid->filter(fn ($r) => ($l = $late($r) ?? 0) >= $range[0] && $l <= $range[1]);
-
-                return ['label' => $label, 'count' => $rows->count(), 'amount' => round($rows->sum('amount'), 2)];
-            })->values();
-
-        $month = fn ($date) => $date && $date->isSameMonth(today());
+        $paidOn = fn (Record $r) => $r->or_date ?? $r->check_date; // the OR, else the check
         $uncleared = $records->filter(fn ($r) => $r->paid && ! $r->check_cleared && ($r->check_number || $r->check_date));
+        $notInvoiced = $records->filter(fn ($r) => $r->dr_number && ! $r->si_number);
+        $noDue = $unpaid->filter(fn ($r) => $r->age() === 'no-due');
 
         return Inertia::render('dashboard', [
+            'filters' => array_filter($filters),
+            'groups' => Record::where('company', '!=', '')->distinct()->orderBy('company')->pluck('company'),
             'totals' => $sum($records),
             'month' => [
-                'billed' => round($records->filter(fn ($r) => $month($r->si_date))->sum('amount'), 2),
-                'collected' => round($records->filter(fn ($r) => $r->paid && $month($r->or_date ?? $r->check_date))->sum('amount'), 2),
+                'billed' => round($records->filter(fn ($r) => $r->si_date?->isSameMonth(today()))->sum('amount'), 2),
+                'collected' => round($records->filter(fn ($r) => $r->paid && $paidOn($r)?->isSameMonth(today()))->sum('amount'), 2),
             ],
             'checkingCount' => $records->filter(fn ($r) => $r->payment() === 'checking')->count(),
-            'aging' => $aging,
+            'aging' => collect(Record::AGING)->map(function ($bucket, $key) use ($unpaid) {
+                $rows = $unpaid->filter(fn ($r) => $r->age() === $key);
+
+                return ['key' => $key, 'label' => $bucket[0], 'count' => $rows->count(), 'amount' => round($rows->sum('amount'), 2)];
+            })->values(),
             // Overdue, then what falls due within a week: who to call.
-            'collect' => $unpaid->filter(fn ($r) => ($l = $late($r)) !== null && $l >= -7)->sortBy(fn ($r) => $r->dueOn())->take(15)
-                ->map(fn (Record $r) => [...$brief($r), 'due' => $r->dueOn()->toDateString(), 'late' => $late($r)])->values(),
+            'collect' => $unpaid->filter(fn ($r) => ($l = $r->daysLate()) !== null && $l >= -7)->sortBy(fn ($r) => $r->dueOn())->take(15)
+                ->map(fn (Record $r) => [...$brief($r), 'due' => $r->dueOn()->toDateString(), 'late' => $r->daysLate()])->values(),
+            'debtors' => self::debtors($records, $paidOn),
+            'trend' => self::trend($records, $paidOn, $filters),
+            'notInvoiced' => [
+                'count' => $notInvoiced->count(),
+                'rows' => $notInvoiced->sortBy('dr_date')->take(15)
+                    ->map(fn (Record $r) => [...$brief($r), 'dr_date' => $r->dr_date?->toDateString(), 'days' => $r->dr_date ? (int) $r->dr_date->diffInDays(today()) : null])->values(),
+            ],
+            'noDue' => [
+                'count' => $noDue->count(),
+                'rows' => $noDue->sortByDesc('id')->take(15)
+                    ->map(fn (Record $r) => [...$brief($r), 'missing' => implode(' and ', array_filter([! $r->si_date ? 'SI date' : null, $r->terms_days === null ? 'terms' : null]))])->values(),
+            ],
             'uncleared' => [
                 'count' => $uncleared->count(),
                 'amount' => round($uncleared->sum('amount'), 2),
                 'rows' => $uncleared->sortBy(fn ($r) => $r->check_date ?? $r->or_date)->take(15)
                     ->map(fn (Record $r) => [...$brief($r), ...$r->only('check_number'), 'check_date' => $r->check_date?->toDateString()])->values(),
             ],
+            // SI / DR numbers run across every group and date, so these ignore the filters.
             'skipped' => [
-                'si' => self::skipped($records, 'si_number', Setting::get('booklet.si')),
-                'dr' => self::skipped($records, 'dr_number', Setting::get('booklet.dr')),
+                'si' => self::skipped($all = Record::get(['si_number', 'dr_number']), 'si_number', Setting::get('booklet.si')),
+                'dr' => self::skipped($all, 'dr_number', Setting::get('booklet.dr')),
             ],
             'companies' => $records->groupBy('company')->map(fn ($rows, $company) => ['company' => $company, ...$sum($rows)])
                 ->sortByDesc('unpaid')->values(),
         ]);
+    }
+
+    /**
+     * The 10 companies (sold to; the group when blank) owing the most, with how many days they take to pay on average
+     * (SI date to OR / check date, over their paid invoices).
+     */
+    private static function debtors(Collection $records, \Closure $paidOn): Collection
+    {
+        return $records->groupBy(fn ($r) => trim($r->sold_to ?: $r->company) ?: '(no company)')
+            ->map(function ($rows, $name) use ($paidOn) {
+                $unpaid = $rows->where('paid', false);
+                $days = $rows->filter(fn ($r) => $r->paid && $r->si_date && $paidOn($r))->map(fn ($r) => $r->si_date->diffInDays($paidOn($r), false));
+
+                return [
+                    'name' => $name,
+                    'group' => $rows->first()->company,
+                    'unpaid' => round($unpaid->sum('amount'), 2),
+                    'overdue' => round($unpaid->filter->isOverdue()->sum('amount'), 2),
+                    'count' => $unpaid->count(),
+                    'days' => $days->isEmpty() ? null : (int) round($days->avg()),
+                ];
+            })
+            ->filter(fn ($c) => $c['unpaid'] > 0)->sortByDesc('unpaid')->take(10)->values();
+    }
+
+    /**
+     * Billed (by SI date) and collected (by OR / check date) per month: the last 12 months, or the months of the
+     * date filter (at most 24, the latest).
+     */
+    private static function trend(Collection $records, \Closure $paidOn, array $filters): array
+    {
+        $last = isset($filters['to']) ? Carbon::parse($filters['to'])->startOfMonth() : today()->startOfMonth();
+        $first = isset($filters['from']) ? Carbon::parse($filters['from'])->startOfMonth() : $last->copy()->subMonths(11);
+        $first = $first->max($last->copy()->subMonths(23))->min($last);
+        $months = [];
+        for ($m = $first->copy(); $m->lte($last); $m->addMonth()) {
+            $months[$m->format('Y-m')] = ['month' => $m->format('Y-m'), 'billed' => 0.0, 'collected' => 0.0];
+        }
+        foreach ($records as $r) {
+            if (isset($months[$key = $r->si_date?->format('Y-m')])) {
+                $months[$key]['billed'] += $r->amount;
+            }
+            if ($r->paid && isset($months[$key = $paidOn($r)?->format('Y-m')])) {
+                $months[$key]['collected'] += $r->amount;
+            }
+        }
+
+        return array_values(array_map(fn ($m) => [...$m, 'billed' => round($m['billed'], 2), 'collected' => round($m['collected'], 2)], $months));
     }
 
     /** The first SI # / DR # of the booklet: numbers from there on are watched for skips (older ones are backlog). */
