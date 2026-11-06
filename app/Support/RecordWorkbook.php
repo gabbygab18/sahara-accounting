@@ -30,6 +30,8 @@ class RecordWorkbook
         'si_number' => ['SI', 'SINO', 'SINUMBER', 'INVOICE', 'INVOICENO', 'INVOICENUMBER', 'SALESINVOICE'],
         'or_date' => ['ORDATE', 'OFFICIALRECEIPTDATE', 'DATEPAID', 'PAYMENTDATE'],
         'or_number' => ['OR', 'ORNO', 'ORNUMBER', 'OFFICIALRECEIPT'],
+        'booklet_number' => ['BOOKLET', 'BOOKLETNO', 'BOOKLETNUMBER'],
+        'envelope_number' => ['ENVELOPE', 'ENVELOPENO', 'ENVELOPENUMBER'],
         'si_amount' => ['SIAMOUNT', 'INVOICEAMOUNT'],
         'amount' => ['TOTALAMOUNT', 'AMOUNT', 'TOTAL', 'TOTALAMOUNTDUE', 'AMOUNTDUE'],
         'paid' => ['PAYMENTSTATUS', 'PAYMENT', 'PAID', 'STATUS'],

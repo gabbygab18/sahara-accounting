@@ -54,10 +54,9 @@ export function ComboInput({
                     setOpen(true);
                     setActive(-1);
                 }}
-                onFocus={(e) => {
-                    setOpen(true);
-                    onFocus?.(e);
-                }}
+                onFocus={onFocus}
+                // Opens on a click or typing, not on focus alone: the dialog focuses the first field as it opens.
+                onClick={() => setOpen(true)}
                 onBlur={(e) => {
                     setOpen(false);
                     setActive(-1);

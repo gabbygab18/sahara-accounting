@@ -18,7 +18,7 @@ class RecordTest extends TestCase
         return [
             'company' => 'Cityland Dev Corp', 'sold_to' => 'Pines Peak Towers', 'project' => 'Ground up', 'tin' => '008-424-957-000',
             'po_date' => '2026-10-01', 'po_number' => 'PO-114', 'terms_days' => 30, 'paid' => false,
-            'check_number' => null, 'check_date' => null, 'check_cleared' => false, 'or_date' => null, 'or_number' => null, 'paid_confirmed' => false, 'cash' => false,
+            'check_number' => null, 'check_date' => null, 'check_cleared' => false, 'or_date' => null, 'or_number' => null, 'paid_confirmed' => false, 'cash' => false, 'si_cancelled' => false, 'booklet_number' => null, 'envelope_number' => null,
             'drs' => [['date' => '2026-10-05', 'number' => 'DR-1', 'status' => 'Delivered']],
             ...$this->si('194651', 394.45),
             ...$overrides,
@@ -62,6 +62,57 @@ class RecordTest extends TestCase
 
         $this->get('/records/export?company=Cityland+Dev+Corp&payment=unpaid&format=print')->assertOk()
             ->assertSee('Unpaid invoices · Cityland Dev Corp')->assertSee('194651')->assertSee('₱394.45')->assertDontSee('Megaworld');
+    }
+
+    public function test_payments_confirmed_at_once()
+    {
+        $this->actingAs($admin = User::factory()->create());
+        $a = Record::create($this->invoice(['paid' => true, 'paid_confirmed' => false]));
+        $b = Record::create($this->invoice([...$this->si('2', 10), 'paid' => true, 'paid_confirmed' => false]));
+        $c = Record::create($this->invoice([...$this->si('3', 10)])); // unpaid: left as it is
+
+        $this->patch('/records/confirm', ['ids' => [$a->id, $b->id, $c->id]])->assertSessionHas('success', 'Confirmed 2 payments.');
+        $this->assertSame([true, true, false], [$a->fresh()->paid_confirmed, $b->fresh()->paid_confirmed, $c->fresh()->paid]);
+
+        $this->actingAs(User::factory()->staff()->create())->patch('/records/confirm', ['ids' => [$c->id]])->assertForbidden();
+        $this->assertFalse($c->fresh()->paid);
+    }
+
+    public function test_ticked_records_paid_by_one_check()
+    {
+        $this->actingAs(User::factory()->create());
+        $a = Record::create($this->invoice());
+        $b = Record::create($this->invoice([...$this->si('2', 10)]));
+        $cancelled = Record::create($this->invoice([...$this->si('3', 10), 'si_cancelled' => true])); // not owed: left as it is
+
+        $this->patch('/records/pay', ['ids' => [$a->id, $b->id, $cancelled->id], 'check_number' => ' 5521 ', 'or_number' => '88'])
+            ->assertSessionHas('success', 'Marked 2 records paid.');
+        foreach ([$a, $b] as $record) {
+            $this->assertSame([true, true, '5521', '88'], [$record->fresh()->paid, $record->fresh()->paid_confirmed, $record->fresh()->check_number, $record->fresh()->or_number]);
+        }
+        $this->assertFalse($cancelled->fresh()->paid);
+    }
+
+    public function test_a_cancelled_si_and_where_it_is_filed()
+    {
+        $this->actingAs(User::factory()->create());
+        $this->post('/records', $this->invoice(['si_cancelled' => true, 'booklet_number' => '12', 'envelope_number' => 'E-3']))->assertSessionHasNoErrors();
+        $record = Record::sole();
+        $row = array_combine(array_keys(Record::COLUMNS), $record->toRow());
+        $this->assertSame(['Cancelled', '12', 'E-3'], [$row['paid'], $row['booklet_number'], $row['envelope_number']]);
+        $this->assertTrue(Record::fromRow(array_values($row))['si_cancelled']);
+        // Not owed: out of the summary and the unpaid list, but its SI # still counts as used.
+        $this->get('/dashboard')->assertInertia(fn ($page) => $page->where('totals.unpaid', 0)->where('collect', []));
+        $this->get('/records?payment=unpaid')->assertInertia(fn ($page) => $page->where('records.total', 0));
+        $this->get('/records?q=E-3')->assertInertia(fn ($page) => $page->where('records.total', 1));
+        $this->post('/records', $this->invoice())->assertSessionHasErrors('sis.0.number');
+        $this->get('/records/export?payment=unpaid&format=print')->assertOk()->assertDontSee('194651');
+
+        // One typed as "CANCELLED" before the box existed is flagged by the migration; a real company is not.
+        $typed = Record::create(['company' => 'Cityland', 'sold_to' => 'CANCELLED', 'sis' => [['number' => '184401', 'amount' => 0]]]);
+        $real = Record::create(['company' => 'Cityland', 'sold_to' => 'Pines Peak', 'sis' => [['number' => '184402', 'amount' => 5]]]);
+        (require database_path('migrations/2026_11_06_000002_flag_records_typed_as_cancelled.php'))->up();
+        $this->assertSame([true, false], [$typed->fresh()->si_cancelled, $real->fresh()->si_cancelled]);
     }
 
     public function test_an_si_number_is_used_once()

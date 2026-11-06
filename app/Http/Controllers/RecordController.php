@@ -8,6 +8,7 @@ use App\Support\RecordWorkbook;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
@@ -34,7 +35,7 @@ class RecordController extends Controller
             'totals' => ! $request->user()->can('dashboard') ? null : [
                 'paid' => round((float) (clone $filtered)->where('paid', true)->where('paid_confirmed', true)->sum('amount'), 2),
                 'checking' => round((float) (clone $filtered)->where('paid', true)->where('paid_confirmed', false)->sum('amount'), 2),
-                'unpaid' => round((float) (clone $filtered)->where('paid', false)->sum('amount'), 2),
+                'unpaid' => round((float) (clone $filtered)->where('paid', false)->where('si_cancelled', false)->sum('amount'), 2),
             ],
             'filters' => $request->only(self::FILTERS),
             'show' => self::SHOWS[$request->show] ?? (Record::AGING[$request->show][0] ?? null),
@@ -72,8 +73,40 @@ class RecordController extends Controller
         return back()->with('success', "Confirmed payment of {$record->label()}.");
     }
 
+    /** Confirm several payments at once, ticked in Records. */
+    public function confirmMany(Request $request): RedirectResponse
+    {
+        $ids = $request->validate(['ids' => ['required', 'array', 'max:500'], 'ids.*' => ['integer']])['ids'];
+        $records = Record::whereIn('id', $ids)->where('paid', true)->where('paid_confirmed', false)->get();
+        foreach ($records as $record) {
+            $record->fill(['paid_confirmed' => true])->pending_sync = true;
+            Activity::log($request->user(), 'edited', $record);
+            $record->save();
+        }
+        $this->syncSheetSoon();
+
+        return back()->with('success', 'Confirmed '.$records->count().' '.Str::plural('payment', $records->count()).'.');
+    }
+
     /** "Mark paid" from the list: the check (or cash) and the OR. From an agent it waits for the admin's double check. */
     public function pay(Request $request, Record $record): RedirectResponse
+    {
+        $this->markPaid($request, [$record]);
+
+        return back()->with('success', "Marked {$record->label()} paid.");
+    }
+
+    /** The ticked unpaid records, paid by one check (or cash) and OR. */
+    public function payMany(Request $request): RedirectResponse
+    {
+        $ids = $request->validate(['ids' => ['required', 'array', 'max:500'], 'ids.*' => ['integer']])['ids'];
+        $records = Record::whereIn('id', $ids)->where('paid', false)->where('si_cancelled', false)->get();
+        $this->markPaid($request, $records);
+
+        return back()->with('success', 'Marked '.$records->count().' '.Str::plural('record', $records->count()).' paid.');
+    }
+
+    private function markPaid(Request $request, iterable $records): void
     {
         $data = $request->validate([
             'cash' => ['boolean'],
@@ -82,12 +115,13 @@ class RecordController extends Controller
             'or_date' => ['nullable', 'date'],
             'or_number' => ['nullable', 'string', 'max:100'],
         ]);
-        $record->fill([...self::cashOrCheck(array_map(fn ($v) => is_string($v) ? trim($v) : $v, $data)), 'paid' => true, 'paid_confirmed' => $request->user()->can('confirm')])->pending_sync = true;
-        Activity::log($request->user(), 'edited', $record);
-        $record->save();
+        $data = self::cashOrCheck(array_map(fn ($v) => is_string($v) ? trim($v) : $v, $data));
+        foreach ($records as $record) {
+            $record->fill([...$data, 'paid' => true, 'paid_confirmed' => $request->user()->can('confirm')])->pending_sync = true;
+            Activity::log($request->user(), 'edited', $record);
+            $record->save();
+        }
         $this->syncSheetSoon();
-
-        return back()->with('success', "Marked {$record->label()} paid.");
     }
 
     public function destroy(Request $request, Record $record): RedirectResponse
@@ -151,7 +185,7 @@ class RecordController extends Controller
             ->when($request->delivery, fn ($q, $d) => $q->where('delivery_status', $d))
             ->when($request->payment === 'paid', fn ($q) => $q->where('paid', true)->where('paid_confirmed', true))
             ->when($request->payment === 'checking', fn ($q) => $q->where('paid', true)->where('paid_confirmed', false))
-            ->when($request->payment === 'unpaid', fn ($q) => $q->where('paid', false))
+            ->when($request->payment === 'unpaid', fn ($q) => $q->where('paid', false)->where('si_cancelled', false))
             // Dated by the invoice, or by the DR while there is no invoice yet.
             ->when($request->from, fn ($q, $d) => $q->whereRaw('COALESCE(si_date, dr_date) >= ?', [$d]))
             ->when($request->to, fn ($q, $d) => $q->whereRaw('COALESCE(si_date, dr_date) <= ?', [$d]))
@@ -223,6 +257,9 @@ class RecordController extends Controller
             'check_cleared' => ['boolean'],
             'cash' => ['boolean'],
             'si_missing' => ['boolean'],
+            'si_cancelled' => ['boolean'],
+            'booklet_number' => ['nullable', 'string', 'max:50'],
+            'envelope_number' => ['nullable', 'string', 'max:50'],
         ]);
 
         $data['drs'] ??= [];
@@ -252,6 +289,7 @@ class RecordController extends Controller
         }
         $data['check_cleared'] = $request->boolean('check_cleared');
         $data['si_missing'] = $request->boolean('si_missing');
+        $data['si_cancelled'] = $request->boolean('si_cancelled');
         $data = self::cashOrCheck($data);
         $data['paid_confirmed'] = $data['paid'] && $request->boolean('paid_confirmed');
         if (! $request->user()->can('confirm')) {

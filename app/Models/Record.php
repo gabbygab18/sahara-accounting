@@ -47,6 +47,8 @@ class Record extends Model
         'check_cleared' => 'CHECK CLEARED',
         'or_date' => 'OR DATE',
         'or_number' => 'OR #',
+        'booklet_number' => 'BOOKLET #',
+        'envelope_number' => 'ENVELOPE #',
     ];
 
     /** Columns holding one line per DR / SI: column => [lines, key in a line]. */
@@ -64,12 +66,12 @@ class Record extends Model
     public const PAID_BY = ['Check', 'Cash'];
 
     /** Payment status as written in the sheet, with its colour there. */
-    public const PAYMENT = ['Unpaid' => '#f4c7c3', 'For checking' => '#fce8b2', 'Paid' => '#b7e1cd'];
+    public const PAYMENT = ['Unpaid' => '#f4c7c3', 'For checking' => '#fce8b2', 'Paid' => '#b7e1cd', 'Cancelled' => '#e0e0e0'];
 
     public const DATES = ['po_date', 'dr_date', 'si_date', 'check_date', 'or_date'];
 
     /** Stored fields (the activity log compares these). The DR / SI ones are filled from the lines. */
-    public const FIELDS = ['company', 'sold_to', 'project', 'tin', 'po_date', 'po_number', 'dr_date', 'dr_number', 'delivery_status', 'si_date', 'si_number', 'terms_days', 'amount', 'paid', 'cash', 'check_number', 'check_date', 'check_cleared', 'or_date', 'or_number'];
+    public const FIELDS = ['company', 'sold_to', 'project', 'tin', 'po_date', 'po_number', 'dr_date', 'dr_number', 'delivery_status', 'si_date', 'si_number', 'terms_days', 'amount', 'paid', 'cash', 'check_number', 'check_date', 'check_cleared', 'or_date', 'or_number', 'booklet_number', 'envelope_number', 'si_cancelled'];
 
     protected $fillable = [...self::FIELDS, 'si_missing', 'drs', 'sis', 'paid_confirmed', 'user_id', 'synced_at', 'pending_sync'];
 
@@ -89,6 +91,7 @@ class Record extends Model
             'check_cleared' => 'boolean',
             'cash' => 'boolean',
             'si_missing' => 'boolean',
+            'si_cancelled' => 'boolean',
             'terms_days' => 'integer',
             'synced_at' => 'datetime',
             'pending_sync' => 'boolean',
@@ -187,7 +190,7 @@ class Record extends Model
     /** Its AGING key while unpaid, else null. */
     public function age(): ?string
     {
-        if ($this->paid) {
+        if ($this->paid || $this->si_cancelled) {
             return null;
         }
         if (($late = $this->daysLate()) === null) {
@@ -207,20 +210,20 @@ class Record extends Model
     {
         return Arr::join(array_filter([
             $this->si_missing ? 'actual SI' : null,
-            ! $this->paid && ! $this->si_date ? 'SI date' : null,
-            ! $this->paid && $this->terms_days === null ? 'terms' : null,
+            ! $this->paid && ! $this->si_cancelled && ! $this->si_date ? 'SI date' : null,
+            ! $this->paid && ! $this->si_cancelled && $this->terms_days === null ? 'terms' : null,
         ]), ', ', ' and ') ?: null;
     }
 
     public function isOverdue(): bool
     {
-        return ! $this->paid && ($due = $this->dueOn()) && $due->lt(today());
+        return ! $this->paid && ! $this->si_cancelled && ($due = $this->dueOn()) && $due->lt(today());
     }
 
     public function scopeSearch(Builder $q, string $text): void
     {
         $like = '%'.trim($text).'%';
-        $q->where(fn ($q) => $q->whereAny(['company', 'sold_to', 'project', 'tin', 'po_number', 'dr_number', 'si_number', 'or_number', 'check_number'], 'like', $like));
+        $q->where(fn ($q) => $q->whereAny(['company', 'sold_to', 'project', 'tin', 'po_number', 'dr_number', 'si_number', 'or_number', 'check_number', 'booklet_number', 'envelope_number'], 'like', $like));
     }
 
     /** "SI 194651 · Cityland Dev Corp / Pines Peak Towers" for the activity log. */
@@ -250,7 +253,7 @@ class Record extends Model
 
             return match (true) {
                 in_array($column, self::DATES, true) => $this->{$column}?->format('Y-m-d'),
-                $column === 'paid' => ['unpaid' => 'Unpaid', 'checking' => 'For checking', 'paid' => 'Paid'][$this->payment()],
+                $column === 'paid' => $this->si_cancelled ? 'Cancelled' : ['unpaid' => 'Unpaid', 'checking' => 'For checking', 'paid' => 'Paid'][$this->payment()],
                 // Blank until there is a check (or cash) to tell.
                 $column === 'cash' => $this->cash ? 'Cash' : ($this->check_number || $this->check_date ? 'Check' : null),
                 // Blank until there is a check to clear.
@@ -285,6 +288,7 @@ class Record extends Model
         // "For checking" is paid, not yet confirmed; any other paid word means confirmed.
         $checking = (bool) preg_match('/\b(for|to) check/i', (string) $cell['paid']);
         $out['paid'] = $out['paid'] || $checking;
+        $out['si_cancelled'] = (bool) preg_match('/^cancel/i', trim((string) $cell['paid']));
         $out['paid_confirmed'] = $out['paid'] && ! $checking;
 
         $text = fn ($v) => ($t = trim((string) $v)) === '' ? null : $t;

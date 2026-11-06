@@ -9,33 +9,35 @@ import { isoDate, peso, type AccountingRecord } from '@/lib/records';
 import { useForm } from '@inertiajs/react';
 import { useEffect } from 'react';
 
-/** "Mark paid" from the list: only the check (or cash) and the OR, the rest of the record stays as it is. */
-export function PayDialog({ record, onClose }: { record: AccountingRecord | null; onClose: () => void }) {
+/** "Mark paid" from the list: only the check (or cash) and the OR, the rest of the record stays as it is. Several ticked records share them. */
+export function PayDialog({ records, onClose }: { records: AccountingRecord[]; onClose: () => void }) {
+    const record = records.length === 1 ? records[0] : null;
     const canConfirm = useCan('confirm');
     const form = useForm({ cash: false as boolean, check_number: '', check_date: '', or_date: '', or_number: '' });
     const { data, setData, errors, processing } = form;
 
     useEffect(() => {
-        if (!record) return;
+        if (!records.length) return;
         form.clearErrors();
         form.setData({
-            cash: record.cash,
-            check_number: record.check_number ?? '',
-            check_date: record.check_date ?? '',
-            or_date: record.or_date ?? isoDate(new Date()),
-            or_number: record.or_number ?? '',
+            cash: record?.cash ?? false,
+            check_number: record?.check_number ?? '',
+            check_date: record?.check_date ?? '',
+            or_date: record?.or_date ?? isoDate(new Date()),
+            or_number: record?.or_number ?? '',
         });
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [record?.id]);
+    }, [records.map((r) => r.id).join()]);
 
     return (
-        <Dialog open={!!record} onOpenChange={(o) => !o && onClose()}>
+        <Dialog open={records.length > 0} onOpenChange={(o) => !o && onClose()}>
             <DialogContent className="max-w-md">
                 <DialogHeader>
-                    <DialogTitle>Mark paid</DialogTitle>
+                    <DialogTitle>{record ? 'Mark paid' : `Mark ${records.length} records paid`}</DialogTitle>
                     <DialogDescription>
-                        {record &&
-                            `${record.si_number ? `SI ${record.si_number}` : record.po_number ? `PO ${record.po_number}` : 'Record'} · ${record.company} · ${peso(record.amount)}`}
+                        {record
+                            ? `${record.si_number ? `SI ${record.si_number}` : record.po_number ? `PO ${record.po_number}` : 'Record'} · ${record.company} · ${peso(record.amount)}`
+                            : `${records.map((r) => r.si_number || r.po_number || '—').join(', ')} · ${peso(records.reduce((sum, r) => sum + r.amount, 0))} in all, paid by the same check or cash`}
                         {!canConfirm && ' — the admin double checks it before it counts as paid.'}
                     </DialogDescription>
                 </DialogHeader>
@@ -43,7 +45,11 @@ export function PayDialog({ record, onClose }: { record: AccountingRecord | null
                     className="grid gap-4"
                     onSubmit={(e) => {
                         e.preventDefault();
-                        if (record) form.patch(route('records.pay', record.id), { preserveScroll: true, onSuccess: onClose });
+                        form.transform((d) => ({ ...d, ids: records.map((r) => r.id) }));
+                        form.patch(record ? route('records.pay', record.id) : route('records.pay-many'), {
+                            preserveScroll: true,
+                            onSuccess: onClose,
+                        });
                     }}
                 >
                     <div className="grid gap-1.5">

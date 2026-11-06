@@ -26,6 +26,7 @@ class DashboardController extends Controller
         $filters = $request->validate(['company' => ['nullable', 'string'], 'from' => ['nullable', 'date'], 'to' => ['nullable', 'date']]);
         // ponytail: every record loaded once and summed in PHP (due dates differ per SQL dialect); fine into the tens of thousands
         $records = Record::query()
+            ->where('si_cancelled', false) // a cancelled SI is no sale
             ->when($filters['company'] ?? null, fn ($q, $c) => $q->where('company', $c))
             // Dated by the invoice, or by the DR while there is no invoice yet (as in Records).
             ->when($filters['from'] ?? null, fn ($q, $d) => $q->whereRaw('COALESCE(si_date, dr_date) >= ?', [$d]))

@@ -41,6 +41,9 @@ const blank: Form = {
     paid_confirmed: false,
     cash: false,
     si_missing: false,
+    si_cancelled: false,
+    booklet_number: '',
+    envelope_number: '',
     check_number: '',
     check_date: '',
     check_cleared: false,
@@ -206,6 +209,9 @@ function Review({ data, canConfirm }: { data: Form; canConfirm: boolean }) {
                 .join('\n'),
         ],
         ['Actual SI', data.si_missing ? 'Missing' : ''],
+        ['Cancelled', data.si_cancelled ? 'Yes, this SI is cancelled' : ''],
+        ['Booklet #', data.booklet_number ?? ''],
+        ['Envelope #', data.envelope_number ?? ''],
         ['Total', peso(data.sis.reduce((sum, l) => sum + money(l.amount), 0))],
         ['Payment', !data.paid ? 'Unpaid' : canConfirm && !data.paid_confirmed ? 'For checking' : 'Paid'],
         ['Paid by', data.cash ? 'Cash' : check || data.paid ? 'Check' : ''],
@@ -360,6 +366,8 @@ export function RecordDialog({
                                 />
                             </Field>
                             {text('tin', 'TIN')}
+                            {text('booklet_number', 'Booklet #', { placeholder: 'Optional' })}
+                            {text('envelope_number', 'Envelope #', { placeholder: 'Optional' })}
                         </section>
 
                         <section className="grid gap-3 border-t pt-4 sm:grid-cols-3">
@@ -427,12 +435,20 @@ export function RecordDialog({
                             </Lines>
                             {lineError('sis') && <p className="text-destructive text-xs">{lineError('sis')}</p>}
                             <div className="flex flex-wrap items-center justify-between gap-2">
-                                <Checkbox
-                                    label="Missing the actual SI"
-                                    description="The paper copy can't be found. It shows under Missing details on the dashboard."
-                                    checked={data.si_missing}
-                                    onChange={(e) => setData('si_missing', e.target.checked)}
-                                />
+                                <div className="grid gap-2">
+                                    <Checkbox
+                                        label="Cancelled SI"
+                                        description="Keeps the SI # on record; it is left out of what is owed."
+                                        checked={data.si_cancelled}
+                                        onChange={(e) => setData('si_cancelled', e.target.checked)}
+                                    />
+                                    <Checkbox
+                                        label="Missing the actual SI"
+                                        description="The paper copy can't be found. It shows under Missing details on the dashboard."
+                                        checked={data.si_missing}
+                                        onChange={(e) => setData('si_missing', e.target.checked)}
+                                    />
+                                </div>
                                 <p className="text-right text-sm">
                                     <span className="text-muted-foreground">Total </span>
                                     <b className="tabular-nums">{peso(data.sis.reduce((sum, l) => sum + money(l.amount), 0))}</b>

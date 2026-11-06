@@ -188,7 +188,7 @@ class SheetSync
         $log->pushed = count($sent);
 
         // Header colours, banding, filter, paid green / unpaid red, dropdowns, ₱ amounts, dates and alignment: once per tab (repeating is harmless, so a cleared cache only redoes it).
-        $key = fn ($tab) => 'sheets-styled-v7:'.($this->sheet->spreadsheetId ?? '').':'.$tab;
+        $key = fn ($tab) => 'sheets-styled-v8:'.($this->sheet->spreadsheetId ?? '').':'.$tab;
         if ($unstyled = array_values(array_filter(array_map('strval', array_keys($next)), fn ($tab) => ! Cache::has($key($tab))))) {
             $col = fn ($column) => array_search($column, array_keys(Record::COLUMNS), true) - 1;
             $this->sheet->styleTabs($unstyled, [
@@ -204,6 +204,7 @@ class SheetSync
                     [$col('dr_date'), $col('delivery_status'), '#0f766e'],
                     [$col('si_date'), $col('amount'), '#b45309'],
                     [$col('paid'), $col('or_number'), '#6d28d9'],
+                    [$col('booklet_number'), $col('envelope_number'), '#475569'],
                 ],
             ]);
             foreach ($unstyled as $tab) {
@@ -253,7 +254,7 @@ class SheetSync
         }
 
         $key = 'sheets-master:'.($this->sheet->spreadsheetId ?? '');
-        $styled = 'sheets-styled-master-v1:'.($this->sheet->spreadsheetId ?? '');
+        $styled = 'sheets-styled-master-v2:'.($this->sheet->spreadsheetId ?? '');
         if (Cache::get($key) === ($hash = md5(json_encode($rows))) && Cache::has($styled)) {
             return;
         }

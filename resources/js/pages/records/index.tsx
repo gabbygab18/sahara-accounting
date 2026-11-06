@@ -50,12 +50,18 @@ export default function Records({
     useEffect(() => setQ(filters.q ?? ''), [filters.q]);
     const [editing, setEditing] = useState<AccountingRecord | null>(null);
     const [adding, setAdding] = useState(false);
-    const [paying, setPaying] = useState<AccountingRecord | null>(null);
+    const [paying, setPaying] = useState<AccountingRecord[]>([]);
+    // Ticked records: the unpaid ones marked paid at once, the ones "for checking" confirmed at once.
+    const [selected, setSelected] = useState<(string | number)[]>([]);
+    useEffect(() => setSelected([]), [records.data]);
     const canEdit = useCan('edit');
     const canAdd = useCan('add');
     const canExport = useCan('export');
     const canConfirm = useCan('confirm');
     const projects = options.companies.find((c) => c.name === filters.company)?.projects ?? [];
+    const ticked = records.data.filter((r) => selected.includes(r.id));
+    const checking = canConfirm ? ticked.filter((r) => r.paid && !r.paid_confirmed) : [];
+    const unpaid = canEdit ? ticked.filter((r) => !r.paid && !r.si_cancelled) : [];
     const query = new URLSearchParams(Object.entries(filters).filter(([, v]) => v) as [string, string][]).toString();
 
     const go = (params: Filters & { page?: number }) => {
@@ -185,8 +191,45 @@ export default function Records({
                     )}
                 </div>
 
+                {ticked.length > 0 && (
+                    <div className="flex flex-wrap items-center gap-3 rounded-2xl bg-sky-500/10 px-4 py-2.5 text-sm">
+                        <span>
+                            <b>{ticked.length}</b> ticked · <b className="tabular-nums">{peso(ticked.reduce((sum, r) => sum + r.amount, 0))}</b>
+                        </span>
+                        {!unpaid.length && !checking.length && (
+                            <span className="text-muted-foreground text-xs">Nothing to mark paid or confirm in these.</span>
+                        )}
+                        <span className="ml-auto flex flex-wrap gap-2">
+                            <Button size="sm" variant="ghost" onClick={() => setSelected([])}>
+                                Clear
+                            </Button>
+                            {unpaid.length > 0 && (
+                                <Button size="sm" variant={checking.length ? 'outline' : 'default'} onClick={() => setPaying(unpaid)}>
+                                    Mark {unpaid.length} unpaid as paid
+                                </Button>
+                            )}
+                            {checking.length > 0 && (
+                                <Button
+                                    size="sm"
+                                    onClick={() =>
+                                        router.patch(
+                                            route('records.confirm-many'),
+                                            { ids: checking.map((r) => r.id) },
+                                            { preserveScroll: true, onSuccess: () => setSelected([]) },
+                                        )
+                                    }
+                                >
+                                    Confirm {checking.length === 1 ? 'payment' : `${checking.length} payments`}
+                                </Button>
+                            )}
+                        </span>
+                    </div>
+                )}
+
                 <ResponsiveTable
-                    selectable={false}
+                    selectable={canEdit || canConfirm}
+                    selected={selected}
+                    onSelectionChange={setSelected}
                     rows={records.data}
                     empty="No records match these filters."
                     columns={[
@@ -215,6 +258,13 @@ export default function Records({
                                     <span className="block font-medium">{r.si_number ?? '—'}</span>
                                     <span className="text-muted-foreground text-xs">{prettyDate(r.si_date)}</span>
                                     {r.si_missing && <span className="block text-xs font-medium text-amber-600">Actual SI missing</span>}
+                                    {(r.booklet_number || r.envelope_number) && (
+                                        <span className="text-muted-foreground block text-xs">
+                                            {[r.booklet_number && `Booklet ${r.booklet_number}`, r.envelope_number && `Env. ${r.envelope_number}`]
+                                                .filter(Boolean)
+                                                .join(' · ')}
+                                        </span>
+                                    )}
                                 </span>
                             ),
                         },
@@ -229,7 +279,11 @@ export default function Records({
                             key: 'paid',
                             header: 'Payment',
                             cell: (r) =>
-                                r.paid && r.paid_confirmed ? (
+                                r.si_cancelled ? (
+                                    <Badge size="sm" variant="secondary">
+                                        Cancelled
+                                    </Badge>
+                                ) : r.paid && r.paid_confirmed ? (
                                     <Badge size="sm" variant="success">
                                         Paid
                                     </Badge>
@@ -257,7 +311,7 @@ export default function Records({
                                             <button
                                                 type="button"
                                                 className="text-primary text-xs font-medium whitespace-nowrap hover:underline"
-                                                onClick={() => setPaying(r)}
+                                                onClick={() => setPaying([r])}
                                             >
                                                 Mark paid
                                             </button>
@@ -359,7 +413,7 @@ export default function Records({
                     )}
                 </div>
             </div>
-            <PayDialog record={paying} onClose={() => setPaying(null)} />
+            <PayDialog records={paying} onClose={() => setPaying([])} />
             <RecordDialog open={adding || !!editing} onOpenChange={(o) => !o && (setAdding(false), setEditing(null))} editing={editing} />
         </>
     );
