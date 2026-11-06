@@ -50,6 +50,8 @@ export interface AccountingRecord {
 export interface Company {
     name: string;
     tin: string | null;
+    /** The terms (days) of the group's latest record that has them: the default for its next one. */
+    terms: number | null;
     projects: string[];
     sold_to: string[];
 }

@@ -31,6 +31,22 @@ class RecordTest extends TestCase
         return ['sis' => [['date' => $date, 'number' => $number, 'amount' => $amount]]];
     }
 
+    public function test_an_si_number_is_used_once()
+    {
+        $this->actingAs(User::factory()->create());
+        $this->post('/records', $this->invoice())->assertSessionHasNoErrors();
+        $record = Record::sole();
+
+        // Saving it again with its own number is fine.
+        $this->put("/records/{$record->id}", $this->invoice(['paid' => true]))->assertSessionHasNoErrors();
+        // Another record with that number, or the same number twice, is refused.
+        $this->post('/records', $this->invoice())->assertSessionHasErrors(['sis.0.number' => 'SI # 194651 is already on another record (Cityland Dev Corp · Pines Peak Towers).']);
+        $this->post('/records', ['sis' => [['number' => '9'], ['number' => '9']]] + $this->invoice())->assertSessionHasErrors(['sis.1.number' => 'SI # 9 is entered twice.']);
+        // 1946 is part of 194651's text, not the same number.
+        $this->post('/records', $this->invoice($this->si('1946', 5)))->assertSessionHasNoErrors();
+        $this->assertSame(2, Record::count());
+    }
+
     /** A sheet row from column => cell. */
     private static function row(array $cells): array
     {
@@ -136,10 +152,11 @@ class RecordTest extends TestCase
             ->where('totals.unpaid', 394.45)->where('totals.paid', 0));
         $this->get('/records?q=194652')->assertInertia(fn ($page) => $page->where('records.total', 1));
         $this->get('/records?from=2026-11-01')->assertInertia(fn ($page) => $page->where('records.total', 1)
-            ->where('options.companies.0.name', 'Cityland Dev Corp')->where('options.companies.0.tin', '008-424-957-000'));
+            ->where('options.companies.0.name', 'Cityland Dev Corp')->where('options.companies.0.tin', '008-424-957-000')->where('options.companies.0.terms', 30));
 
         // In SI number order, so a gap shows.
         $this->get('/records')->assertInertia(fn ($page) => $page->where('records.data.0.si_number', '194651')->where('records.data.2.si_number', '194655'));
+        $this->get('/records?sort=latest')->assertInertia(fn ($page) => $page->where('records.data.0.si_number', '194655')->where('filters.sort', 'latest'));
 
         $this->get('/dashboard')->assertInertia(fn ($page) => $page
             ->where('totals.paid', 1000)->where('totals.unpaid', 444.45)->where('totals.overdue', 394.45)

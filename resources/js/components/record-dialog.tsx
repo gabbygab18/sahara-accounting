@@ -1,3 +1,4 @@
+import { ComboInput } from '@/components/combo-input';
 import { DatePicker } from '@/components/date-picker';
 import { Button } from '@/components/glint/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/glint/dialog';
@@ -206,7 +207,18 @@ export function RecordDialog({
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [open, editing?.id]);
 
-    const company = options?.companies.find((c) => c.name.toLowerCase() === data.company.trim().toLowerCase());
+    const known = (name: string) => options?.companies.find((c) => c.name.toLowerCase() === name.trim().toLowerCase());
+    const company = known(data.company);
+    // A known group fills its TIN when that is still empty, and, on a new record, its usual terms.
+    const setGroup = (name: string) => {
+        const c = known(name);
+        setData((d) => ({
+            ...d,
+            company: name,
+            tin: d.tin || (c?.tin ?? ''),
+            terms_days: c && !editing && c.terms !== null ? String(c.terms) : d.terms_days,
+        }));
+    };
     transform((d) => ({
         ...d,
         terms_days: d.terms_days === '' ? null : d.terms_days,
@@ -248,40 +260,33 @@ export function RecordDialog({
                 <form onSubmit={submit} className="grid gap-5">
                     <section className="grid gap-3 sm:grid-cols-2">
                         <Field label="Group (main company)" id="r-company" error={errors.company}>
-                            <Input
+                            <ComboInput
                                 id="r-company"
-                                list="r-companies"
                                 required
-                                autoComplete="off"
                                 placeholder="e.g. Cityland Dev Corp"
+                                options={options?.companies.map((c) => c.name) ?? []}
                                 value={data.company}
-                                onChange={(e) => setData('company', e.target.value)}
-                                // A known group fills its TIN when that is still empty.
-                                onBlur={() => company && !data.tin && setData('tin', company.tin ?? '')}
+                                onValueChange={(v, picked) => (picked ? setGroup(v) : setData('company', v))}
+                                onBlur={() => setGroup(data.company)}
                             />
-                            <datalist id="r-companies">{options?.companies.map((c) => <option key={c.name} value={c.name} />)}</datalist>
                         </Field>
                         <Field label="Company (Sold to on the SI)" id="r-sold_to" error={errors.sold_to}>
-                            <Input
+                            <ComboInput
                                 id="r-sold_to"
-                                list="r-sold-to"
-                                autoComplete="off"
                                 placeholder="e.g. Pines Peak Towers"
+                                options={company?.sold_to ?? []}
                                 value={data.sold_to ?? ''}
-                                onChange={(e) => setData('sold_to', e.target.value)}
+                                onValueChange={(v) => setData('sold_to', v)}
                             />
-                            <datalist id="r-sold-to">{company?.sold_to.map((p) => <option key={p} value={p} />)}</datalist>
                         </Field>
                         <Field label="Project" id="r-project" error={errors.project}>
-                            <Input
+                            <ComboInput
                                 id="r-project"
-                                list="r-projects"
-                                autoComplete="off"
                                 placeholder="e.g. Ground up"
+                                options={company?.projects ?? []}
                                 value={data.project ?? ''}
-                                onChange={(e) => setData('project', e.target.value)}
+                                onValueChange={(v) => setData('project', v)}
                             />
-                            <datalist id="r-projects">{company?.projects.map((p) => <option key={p} value={p} />)}</datalist>
                         </Field>
                         {text('tin', 'TIN')}
                     </section>

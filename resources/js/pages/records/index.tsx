@@ -16,7 +16,17 @@ import { cn } from '@/lib/utils';
 import { router } from '@inertiajs/react';
 import { useEffect, useState } from 'react';
 
-type Filters = { q?: string; company?: string; project?: string; delivery?: string; payment?: string; from?: string; to?: string; show?: string };
+type Filters = {
+    q?: string;
+    company?: string;
+    project?: string;
+    delivery?: string;
+    payment?: string;
+    from?: string;
+    to?: string;
+    show?: string;
+    sort?: string;
+};
 
 const PAYMENT: Record<string, string> = { All: '', Unpaid: 'unpaid', 'For checking': 'checking', Paid: 'paid' };
 const ALL = '__all';
@@ -87,7 +97,7 @@ export default function Records({
                     )}
                 </div>
 
-                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
                     <Select
                         aria-label="Group"
                         options={[{ value: ALL, label: 'All groups' }, ...options.companies.map((c) => ({ value: c.name, label: c.name }))]}
@@ -112,6 +122,15 @@ export default function Records({
                     />
                     <DatePicker value={filters.from ?? ''} onChange={(from) => go({ from })} placeholder="From date" clearable />
                     <DatePicker value={filters.to ?? ''} onChange={(to) => go({ to })} placeholder="To date" clearable />
+                    <Select
+                        aria-label="Sort"
+                        options={[
+                            { value: ALL, label: 'SI # order' },
+                            { value: 'latest', label: 'Last added first' },
+                        ]}
+                        value={filters.sort ?? ALL}
+                        onValueChange={(v) => go({ sort: v === ALL ? '' : v })}
+                    />
                 </div>
 
                 {show && (

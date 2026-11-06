@@ -8,6 +8,7 @@ use App\Support\RecordWorkbook;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
 use Inertia\Response;
 use Symfony\Component\HttpFoundation\BinaryFileResponse;
@@ -16,7 +17,7 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 /** Records: the tracker itself. Add, edit, delete, search, filter and export. */
 class RecordController extends Controller
 {
-    private const FILTERS = ['q', 'company', 'project', 'delivery', 'payment', 'from', 'to', 'show'];
+    private const FILTERS = ['q', 'company', 'project', 'delivery', 'payment', 'from', 'to', 'show', 'sort'];
 
     /** ?show= lists from the summary: an unpaid age group (Record::AGING), or delivered but not yet invoiced. */
     public const SHOWS = ['not-invoiced' => 'Delivered, not yet invoiced'];
@@ -26,8 +27,10 @@ class RecordController extends Controller
         $filtered = $this->filtered($request);
 
         return Inertia::render('records/index', [
-            // In SI number order (1, 2, 3...) so a skipped receipt shows; "+ 0" reads "185561, 185562" as 185561 in MySQL and SQLite.
-            'records' => (clone $filtered)->orderByRaw('si_number IS NULL')->orderByRaw('si_number + 0')->orderBy('si_number')->orderBy('id')
+            'records' => ($request->sort === 'latest'
+                ? (clone $filtered)->latest('id')
+                // In SI number order (1, 2, 3...) so a skipped receipt shows; "+ 0" reads "185561, 185562" as 185561 in MySQL and SQLite.
+                : (clone $filtered)->orderByRaw('si_number IS NULL')->orderByRaw('si_number + 0')->orderBy('si_number')->orderBy('id'))
                 ->paginate(25)->withQueryString()
                 ->through(fn (Record $r) => [...$r->toArray(), 'due' => $r->dueOn()?->toDateString(), 'overdue' => $r->isOverdue()]),
             // Totals of everything the filters match, not just this page; only for accounts allowed the summary.
@@ -142,13 +145,14 @@ class RecordController extends Controller
                 ->get(['id', 'paid', 'si_date', 'terms_days'])->filter(fn ($r) => $r->age() === $request->show)->modelKeys()));
     }
 
-    /** For the filters and the form: groups (with their latest TIN), sold-to companies and projects per group, delivery statuses. */
+    /** For the filters and the form: groups (with their latest TIN and terms), sold-to companies and projects per group, delivery statuses. */
     public function options(): array
     {
-        $rows = Record::query()->toBase()->where('company', '!=', '')->orderBy('id')->get(['company', 'sold_to', 'project', 'tin']);
+        $rows = Record::query()->toBase()->where('company', '!=', '')->orderBy('id')->get(['company', 'sold_to', 'project', 'tin', 'terms_days']);
         $companies = [];
         foreach ($rows as $r) {
             $companies[$r->company]['tin'] = $r->tin ?: ($companies[$r->company]['tin'] ?? null);
+            $companies[$r->company]['terms'] = $r->terms_days ?? ($companies[$r->company]['terms'] ?? null);
             $companies[$r->company]['projects'][$r->project ?? ''] = true;
             $companies[$r->company]['sold_to'][$r->sold_to ?? ''] = true;
         }
@@ -158,6 +162,7 @@ class RecordController extends Controller
             'companies' => collect($companies)->map(fn ($c, $name) => [
                 'name' => (string) $name,
                 'tin' => $c['tin'],
+                'terms' => $c['terms'] === null ? null : (int) $c['terms'],
                 'projects' => collect(array_keys($c['projects']))->filter()->sort(SORT_NATURAL | SORT_FLAG_CASE)->values(),
                 'sold_to' => collect(array_keys($c['sold_to']))->filter()->sort(SORT_NATURAL | SORT_FLAG_CASE)->values(),
             ])->values(),
@@ -194,6 +199,29 @@ class RecordController extends Controller
 
         $data['drs'] ??= [];
         $data['sis'] ??= [];
+
+        // One SI number, one invoice: refuse a number already on another record (or twice on this one).
+        // Old duplicates from the Sheet stay as they are; SI MASTER lists them.
+        $seen = [];
+        foreach ($data['sis'] as $i => $line) {
+            $n = trim((string) ($line['number'] ?? ''));
+            if ($n === '') {
+                continue;
+            }
+            $key = strtolower($n);
+            if (isset($seen[$key])) {
+                throw ValidationException::withMessages(["sis.{$i}.number" => "SI # {$n} is entered twice."]);
+            }
+            $seen[$key] = true;
+            // "like" narrows it down; the exact match is on the comma separated numbers.
+            $other = Record::where('si_number', 'like', "%{$n}%")->when($record, fn ($q) => $q->whereKeyNot($record->id))
+                ->get(['id', 'company', 'sold_to', 'si_number'])
+                ->first(fn (Record $r) => in_array($key, explode(', ', strtolower($r->si_number)), true));
+            if ($other) {
+                throw ValidationException::withMessages(["sis.{$i}.number" => "SI # {$n} is already on another record ("
+                    .implode(' · ', array_filter([$other->company, $other->sold_to])).').']);
+            }
+        }
         $data['check_cleared'] = $request->boolean('check_cleared');
         $data['paid_confirmed'] = $data['paid'] && $request->boolean('paid_confirmed');
         if (! $request->user()->can('confirm')) {
