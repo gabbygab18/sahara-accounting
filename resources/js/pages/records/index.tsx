@@ -297,6 +297,11 @@ export default function Records({
                             ),
                         },
                         {
+                            key: 'cash',
+                            header: 'Paid by',
+                            cell: (r) => (r.cash ? 'Cash' : r.check_number || r.check_date ? 'Check' : '—'),
+                        },
+                        {
                             key: 'or_number',
                             header: 'OR # / Check #',
                             cell: (r) =>
@@ -306,7 +311,7 @@ export default function Records({
                                         <span className="text-muted-foreground text-xs">
                                             {[
                                                 r.or_date && prettyDate(r.or_date),
-                                                r.cash && `cash${r.check_date ? ` ${prettyDate(r.check_date)}` : ''}`,
+                                                r.cash && r.check_date && `paid ${prettyDate(r.check_date)}`,
                                                 r.check_number && `check ${r.check_number}`,
                                                 !r.cash && r.check_date && `deposit ${prettyDate(r.check_date)}`,
                                                 !r.cash && (r.check_number || r.check_date) && (r.check_cleared ? 'cleared' : 'not cleared'),

@@ -9,7 +9,7 @@ import { StretchTabs } from '@/components/glint/stretch-tabs';
 import { Label } from '@/components/ui/label';
 import { useCan } from '@/hooks/use-can';
 import { Plus, Trash, X } from '@/icons';
-import { peso, type AccountingRecord, type RecordOptions } from '@/lib/records';
+import { peso, prettyDate, terms, type AccountingRecord, type RecordOptions } from '@/lib/records';
 import { cn } from '@/lib/utils';
 import { useForm } from '@inertiajs/react';
 import { FormEventHandler, useEffect, useState } from 'react';
@@ -179,6 +179,63 @@ function Numbers({ id, value, onChange, noun }: { id: string; value: string; onC
     );
 }
 
+const join = (parts: unknown[]) => parts.filter(Boolean).join(' · ');
+
+/** A new record as it will be saved, to double check before adding it. Blank fields are left out. */
+function Review({ data, canConfirm }: { data: Form; canConfirm: boolean }) {
+    const check = !data.cash && (data.check_number || data.check_date);
+    const rows: [string, string][] = [
+        ['Group', data.company],
+        ['Company (sold to)', data.sold_to ?? ''],
+        ['Project', data.project ?? ''],
+        ['TIN', data.tin ?? ''],
+        ['PO', join([data.po_number, data.po_date && prettyDate(data.po_date)])],
+        ['Terms', data.terms_days === '' ? '' : terms(Number(data.terms_days))],
+        [
+            'DR',
+            data.drs
+                .map((l) => join([l.number && `DR ${l.number}`, l.date && prettyDate(l.date), l.status]))
+                .filter(Boolean)
+                .join('\n'),
+        ],
+        [
+            'SI',
+            data.sis
+                .map((l) => join([l.number && `SI ${l.number}`, l.date && prettyDate(l.date), l.amount && peso(money(l.amount))]))
+                .filter(Boolean)
+                .join('\n'),
+        ],
+        ['Actual SI', data.si_missing ? 'Missing' : ''],
+        ['Total', peso(data.sis.reduce((sum, l) => sum + money(l.amount), 0))],
+        ['Payment', !data.paid ? 'Unpaid' : canConfirm && !data.paid_confirmed ? 'For checking' : 'Paid'],
+        ['Paid by', data.cash ? 'Cash' : check || data.paid ? 'Check' : ''],
+        ['Cash date', data.cash && data.check_date ? prettyDate(data.check_date) : ''],
+        [
+            'Check',
+            check
+                ? join([
+                      data.check_number,
+                      data.check_date && `deposit ${prettyDate(data.check_date)}`,
+                      data.check_cleared ? 'cleared' : 'not cleared',
+                  ])
+                : '',
+        ],
+        ['OR', join([data.or_number, data.or_date && prettyDate(data.or_date)])],
+    ];
+    return (
+        <dl className="divide-y rounded-2xl border">
+            {rows
+                .filter(([, v]) => v)
+                .map(([k, v]) => (
+                    <div key={k} className="grid gap-1 px-4 py-2.5 text-sm sm:grid-cols-[10rem_1fr] sm:gap-3">
+                        <dt className="text-muted-foreground">{k}</dt>
+                        <dd className="font-medium whitespace-pre-line">{v}</dd>
+                    </div>
+                ))}
+        </dl>
+    );
+}
+
 /** Add a record (no `editing`) or change one. Laid out like the paper: who, delivery, invoice, payment. */
 export function RecordDialog({
     open,
@@ -195,6 +252,8 @@ export function RecordDialog({
     // Staff cannot undo the admin's double check.
     const locked = !canConfirm && !!editing?.paid_confirmed;
     const [confirming, setConfirming] = useState(false);
+    // A new record is shown once more to double check before it is added.
+    const [reviewing, setReviewing] = useState(false);
     const form = useForm<Form>(blank);
     const { data, setData, errors, processing, transform } = form;
 
@@ -203,6 +262,7 @@ export function RecordDialog({
         form.clearErrors();
         form.setData(editing ? toForm(editing) : blank);
         setConfirming(false);
+        setReviewing(false);
         fetch(route('records.options'), { headers: { Accept: 'application/json' } })
             .then((r) => r.json())
             .then(setOptions)
@@ -234,7 +294,9 @@ export function RecordDialog({
     const submit: FormEventHandler = (e) => {
         e.preventDefault();
         if (editing) form.put(route('records.update', editing.id), done);
-        else form.post(route('records.store'), done);
+        else if (!reviewing) setReviewing(true);
+        // Back to the form to fix what the server refused (e.g. an SI # already used).
+        else form.post(route('records.store'), { ...done, onError: () => setReviewing(false) });
     };
 
     const text = (key: keyof Form, label: string, props: React.ComponentProps<typeof Input> = {}) => (
@@ -257,170 +319,177 @@ export function RecordDialog({
         <Dialog open={open} onOpenChange={onOpenChange}>
             <DialogContent className="max-h-[92vh] max-w-3xl overflow-y-auto">
                 <DialogHeader>
-                    <DialogTitle>{editing ? 'Edit record' : 'Add record'}</DialogTitle>
-                    <DialogDescription>Copy it from the PO, DRs and sales invoices. Only the group is required.</DialogDescription>
+                    <DialogTitle>{editing ? 'Edit record' : reviewing ? 'Double check' : 'Add record'}</DialogTitle>
+                    <DialogDescription>
+                        {reviewing
+                            ? 'This is what will be added. Go back to fix anything, or confirm.'
+                            : 'Copy it from the PO, DRs and sales invoices. Only the group is required.'}
+                    </DialogDescription>
                 </DialogHeader>
                 <form onSubmit={submit} className="grid gap-5">
-                    <section className="grid gap-3 sm:grid-cols-2">
-                        <Field label="Group (main company)" id="r-company" error={errors.company}>
-                            <ComboInput
-                                id="r-company"
-                                required
-                                placeholder="e.g. Cityland Dev Corp"
-                                options={options?.companies.map((c) => c.name) ?? []}
-                                value={data.company}
-                                onValueChange={(v, picked) => (picked ? setGroup(v) : setData('company', v))}
-                                onBlur={() => setGroup(data.company)}
-                            />
-                        </Field>
-                        <Field label="Company (Sold to on the SI)" id="r-sold_to" error={errors.sold_to}>
-                            <ComboInput
-                                id="r-sold_to"
-                                placeholder="e.g. Pines Peak Towers"
-                                options={company?.sold_to ?? []}
-                                value={data.sold_to ?? ''}
-                                onValueChange={(v) => setData('sold_to', v)}
-                            />
-                        </Field>
-                        <Field label="Project" id="r-project" error={errors.project}>
-                            <ComboInput
-                                id="r-project"
-                                placeholder="e.g. Ground up"
-                                options={company?.projects ?? []}
-                                value={data.project ?? ''}
-                                onValueChange={(v) => setData('project', v)}
-                            />
-                        </Field>
-                        {text('tin', 'TIN')}
-                    </section>
-
-                    <section className="grid gap-3 border-t pt-4 sm:grid-cols-3">
-                        {date('po_date', 'PO date')}
-                        {numbers('po_number', 'PO #')}
-                        {text('terms_days', 'Terms (days)', { inputMode: 'numeric', placeholder: '30, or 0 for COD' })}
-                    </section>
-
-                    <section className="grid gap-1.5 border-t pt-4">
-                        <Lines
-                            labels={['DR date', 'DR #', 'Delivery status']}
-                            rows={data.drs}
-                            onChange={(drs) => setData('drs', drs)}
-                            blankRow={blankDr}
-                            noun="DR"
-                        >
-                            {(l, set, i) => (
-                                <>
-                                    <DatePicker value={l.date} onChange={(date) => set({ date })} placeholder="DR date" clearable />
-                                    <Input
-                                        aria-label={`DR # ${i + 1}`}
-                                        placeholder="DR #"
-                                        value={l.number}
-                                        onChange={(e) => set({ number: e.target.value })}
-                                    />
-                                    <Select
-                                        aria-label={`Delivery status ${i + 1}`}
-                                        options={[{ value: NOT_SET, label: 'Not set' }, ...delivery.map((d) => ({ value: d, label: d }))]}
-                                        value={l.status || NOT_SET}
-                                        onValueChange={(v) => set({ status: v === NOT_SET ? '' : v })}
-                                    />
-                                </>
-                            )}
-                        </Lines>
-                        {lineError('drs') && <p className="text-destructive text-xs">{lineError('drs')}</p>}
-                    </section>
-
-                    <section className="grid gap-1.5 border-t pt-4">
-                        <Lines
-                            labels={['SI date', 'SI #', 'Amount']}
-                            rows={data.sis}
-                            onChange={(sis) => setData('sis', sis)}
-                            blankRow={blankSi}
-                            noun="SI"
-                        >
-                            {(l, set, i) => (
-                                <>
-                                    <DatePicker value={l.date} onChange={(date) => set({ date })} placeholder="SI date" clearable />
-                                    <Input
-                                        aria-label={`SI # ${i + 1}`}
-                                        placeholder="SI #"
-                                        value={l.number}
-                                        onChange={(e) => set({ number: e.target.value })}
-                                    />
-                                    <Input
-                                        aria-label={`SI amount ${i + 1}`}
-                                        inputMode="decimal"
-                                        startIcon="₱"
-                                        placeholder="0.00"
-                                        value={l.amount}
-                                        onChange={(e) => set({ amount: e.target.value })}
-                                    />
-                                </>
-                            )}
-                        </Lines>
-                        {lineError('sis') && <p className="text-destructive text-xs">{lineError('sis')}</p>}
-                        <div className="flex flex-wrap items-center justify-between gap-2">
-                            <Checkbox
-                                label="Missing the actual SI"
-                                description="The paper copy can't be found. It shows under Missing details on the dashboard."
-                                checked={data.si_missing}
-                                onChange={(e) => setData('si_missing', e.target.checked)}
-                            />
-                            <p className="text-right text-sm">
-                                <span className="text-muted-foreground">Total </span>
-                                <b className="tabular-nums">{peso(data.sis.reduce((sum, l) => sum + money(l.amount), 0))}</b>
-                            </p>
-                        </div>
-                    </section>
-
-                    <section className="grid gap-3 border-t pt-4">
-                        <div className="grid gap-3 sm:grid-cols-2">
-                            <Field label="Payment">
-                                {locked ? (
-                                    <p className="text-sm text-emerald-600">Paid, confirmed by the admin.</p>
-                                ) : (
-                                    <>
-                                        <StretchTabs
-                                            label="Payment status"
-                                            options={canConfirm ? ['Unpaid', 'For checking', 'Paid'] : ['Unpaid', 'Paid']}
-                                            value={!data.paid ? 'Unpaid' : canConfirm && !data.paid_confirmed ? 'For checking' : 'Paid'}
-                                            onChange={(v) => setData((d) => ({ ...d, paid: v !== 'Unpaid', paid_confirmed: v === 'Paid' }))}
-                                        />
-                                        {!canConfirm && data.paid && (
-                                            <p className="text-muted-foreground text-xs">The admin double checks it before it counts as paid.</p>
-                                        )}
-                                    </>
-                                )}
-                            </Field>
-                            <Field label="Paid by">
-                                <StretchTabs
-                                    label="Paid by"
-                                    options={['Check', 'Cash']}
-                                    value={data.cash ? 'Cash' : 'Check'}
-                                    onChange={(v) => setData('cash', v === 'Cash')}
+                    {reviewing && <Review data={data} canConfirm={canConfirm} />}
+                    <div className={cn('grid gap-5', reviewing && 'hidden')}>
+                        <section className="grid gap-3 sm:grid-cols-2">
+                            <Field label="Group (main company)" id="r-company" error={errors.company}>
+                                <ComboInput
+                                    id="r-company"
+                                    required
+                                    placeholder="e.g. Cityland Dev Corp"
+                                    options={options?.companies.map((c) => c.name) ?? []}
+                                    value={data.company}
+                                    onValueChange={(v, picked) => (picked ? setGroup(v) : setData('company', v))}
+                                    onBlur={() => setGroup(data.company)}
                                 />
                             </Field>
-                        </div>
-                        <div className="grid gap-3 sm:grid-cols-3">
-                            {data.cash ? (
-                                date('check_date', 'Cash date (when paid)')
-                            ) : (
-                                <>
-                                    {text('check_number', 'Check #')}
-                                    {date('check_date', 'Check date (for deposit)')}
-                                    <Field label="Check">
-                                        <StretchTabs
-                                            label="Check cleared"
-                                            options={['Not cleared', 'Cleared']}
-                                            value={data.check_cleared ? 'Cleared' : 'Not cleared'}
-                                            onChange={(v) => setData('check_cleared', v === 'Cleared')}
+                            <Field label="Company (Sold to on the SI)" id="r-sold_to" error={errors.sold_to}>
+                                <ComboInput
+                                    id="r-sold_to"
+                                    placeholder="e.g. Pines Peak Towers"
+                                    options={company?.sold_to ?? []}
+                                    value={data.sold_to ?? ''}
+                                    onValueChange={(v) => setData('sold_to', v)}
+                                />
+                            </Field>
+                            <Field label="Project" id="r-project" error={errors.project}>
+                                <ComboInput
+                                    id="r-project"
+                                    placeholder="e.g. Ground up"
+                                    options={company?.projects ?? []}
+                                    value={data.project ?? ''}
+                                    onValueChange={(v) => setData('project', v)}
+                                />
+                            </Field>
+                            {text('tin', 'TIN')}
+                        </section>
+
+                        <section className="grid gap-3 border-t pt-4 sm:grid-cols-3">
+                            {date('po_date', 'PO date')}
+                            {numbers('po_number', 'PO #')}
+                            {text('terms_days', 'Terms (days)', { inputMode: 'numeric', placeholder: '30, or 0 for COD' })}
+                        </section>
+
+                        <section className="grid gap-1.5 border-t pt-4">
+                            <Lines
+                                labels={['DR date', 'DR #', 'Delivery status']}
+                                rows={data.drs}
+                                onChange={(drs) => setData('drs', drs)}
+                                blankRow={blankDr}
+                                noun="DR"
+                            >
+                                {(l, set, i) => (
+                                    <>
+                                        <DatePicker value={l.date} onChange={(date) => set({ date })} placeholder="DR date" clearable />
+                                        <Input
+                                            aria-label={`DR # ${i + 1}`}
+                                            placeholder="DR #"
+                                            value={l.number}
+                                            onChange={(e) => set({ number: e.target.value })}
                                         />
-                                    </Field>
-                                </>
-                            )}
-                            {date('or_date', 'OR date')}
-                            {text('or_number', 'OR #')}
-                        </div>
-                    </section>
+                                        <Select
+                                            aria-label={`Delivery status ${i + 1}`}
+                                            options={[{ value: NOT_SET, label: 'Not set' }, ...delivery.map((d) => ({ value: d, label: d }))]}
+                                            value={l.status || NOT_SET}
+                                            onValueChange={(v) => set({ status: v === NOT_SET ? '' : v })}
+                                        />
+                                    </>
+                                )}
+                            </Lines>
+                            {lineError('drs') && <p className="text-destructive text-xs">{lineError('drs')}</p>}
+                        </section>
+
+                        <section className="grid gap-1.5 border-t pt-4">
+                            <Lines
+                                labels={['SI date', 'SI #', 'Amount']}
+                                rows={data.sis}
+                                onChange={(sis) => setData('sis', sis)}
+                                blankRow={blankSi}
+                                noun="SI"
+                            >
+                                {(l, set, i) => (
+                                    <>
+                                        <DatePicker value={l.date} onChange={(date) => set({ date })} placeholder="SI date" clearable />
+                                        <Input
+                                            aria-label={`SI # ${i + 1}`}
+                                            placeholder="SI #"
+                                            value={l.number}
+                                            onChange={(e) => set({ number: e.target.value })}
+                                        />
+                                        <Input
+                                            aria-label={`SI amount ${i + 1}`}
+                                            inputMode="decimal"
+                                            startIcon="₱"
+                                            placeholder="0.00"
+                                            value={l.amount}
+                                            onChange={(e) => set({ amount: e.target.value })}
+                                        />
+                                    </>
+                                )}
+                            </Lines>
+                            {lineError('sis') && <p className="text-destructive text-xs">{lineError('sis')}</p>}
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                                <Checkbox
+                                    label="Missing the actual SI"
+                                    description="The paper copy can't be found. It shows under Missing details on the dashboard."
+                                    checked={data.si_missing}
+                                    onChange={(e) => setData('si_missing', e.target.checked)}
+                                />
+                                <p className="text-right text-sm">
+                                    <span className="text-muted-foreground">Total </span>
+                                    <b className="tabular-nums">{peso(data.sis.reduce((sum, l) => sum + money(l.amount), 0))}</b>
+                                </p>
+                            </div>
+                        </section>
+
+                        <section className="grid gap-3 border-t pt-4">
+                            <div className="grid gap-3 sm:grid-cols-2">
+                                <Field label="Payment">
+                                    {locked ? (
+                                        <p className="text-sm text-emerald-600">Paid, confirmed by the admin.</p>
+                                    ) : (
+                                        <>
+                                            <StretchTabs
+                                                label="Payment status"
+                                                options={canConfirm ? ['Unpaid', 'For checking', 'Paid'] : ['Unpaid', 'Paid']}
+                                                value={!data.paid ? 'Unpaid' : canConfirm && !data.paid_confirmed ? 'For checking' : 'Paid'}
+                                                onChange={(v) => setData((d) => ({ ...d, paid: v !== 'Unpaid', paid_confirmed: v === 'Paid' }))}
+                                            />
+                                            {!canConfirm && data.paid && (
+                                                <p className="text-muted-foreground text-xs">The admin double checks it before it counts as paid.</p>
+                                            )}
+                                        </>
+                                    )}
+                                </Field>
+                                <Field label="Paid by">
+                                    <StretchTabs
+                                        label="Paid by"
+                                        options={['Check', 'Cash']}
+                                        value={data.cash ? 'Cash' : 'Check'}
+                                        onChange={(v) => setData('cash', v === 'Cash')}
+                                    />
+                                </Field>
+                            </div>
+                            <div className="grid gap-3 sm:grid-cols-3">
+                                {data.cash ? (
+                                    date('check_date', 'Cash date (when paid)')
+                                ) : (
+                                    <>
+                                        {text('check_number', 'Check #')}
+                                        {date('check_date', 'Check date (for deposit)')}
+                                        <Field label="Check">
+                                            <StretchTabs
+                                                label="Check cleared"
+                                                options={['Not cleared', 'Cleared']}
+                                                value={data.check_cleared ? 'Cleared' : 'Not cleared'}
+                                                onChange={(v) => setData('check_cleared', v === 'Cleared')}
+                                            />
+                                        </Field>
+                                    </>
+                                )}
+                                {date('or_date', 'OR date')}
+                                {text('or_number', 'OR #')}
+                            </div>
+                        </section>
+                    </div>
 
                     <DialogFooter className="flex-row flex-wrap">
                         {editing && canDelete && (
@@ -434,11 +503,11 @@ export function RecordDialog({
                                 {confirming ? 'Yes, delete it' : 'Delete'}
                             </Button>
                         )}
-                        <Button type="button" variant="outline" onClick={() => onOpenChange(false)}>
-                            Cancel
+                        <Button type="button" variant="outline" onClick={() => (reviewing ? setReviewing(false) : onOpenChange(false))}>
+                            {reviewing ? 'Back' : 'Cancel'}
                         </Button>
                         <Button type="submit" loading={processing}>
-                            {editing ? 'Save changes' : 'Add record'}
+                            {editing ? 'Save changes' : reviewing ? 'Confirm and add' : 'Add record'}
                         </Button>
                     </DialogFooter>
                 </form>
