@@ -38,6 +38,10 @@ export interface AccountingRecord {
     paid: boolean;
     /** Double checked by the admin. Paid but not confirmed = for checking. */
     paid_confirmed: boolean;
+    /** The paper SI can't be found. */
+    si_missing: boolean;
+    /** Paid in cash: check_date is then the day the cash came in. */
+    cash: boolean;
     check_number: string | null;
     /** When the check can be deposited. */
     check_date: string | null;

@@ -25,7 +25,7 @@ type Filters = {
     from?: string;
     to?: string;
     show?: string;
-    sort?: string;
+    order?: string;
 };
 
 const PAYMENT: Record<string, string> = { All: '', Unpaid: 'unpaid', 'For checking': 'checking', Paid: 'paid' };
@@ -128,8 +128,8 @@ export default function Records({
                             { value: ALL, label: 'SI # order' },
                             { value: 'latest', label: 'Last added first' },
                         ]}
-                        value={filters.sort ?? ALL}
-                        onValueChange={(v) => go({ sort: v === ALL ? '' : v })}
+                        value={filters.order ?? ALL}
+                        onValueChange={(v) => go({ order: v === ALL ? '' : v })}
                     />
                 </div>
 
@@ -209,6 +209,7 @@ export default function Records({
                                 <span className="block">
                                     <span className="block font-medium">{r.si_number ?? '—'}</span>
                                     <span className="text-muted-foreground text-xs">{prettyDate(r.si_date)}</span>
+                                    {r.si_missing && <span className="block text-xs font-medium text-amber-600">Actual SI missing</span>}
                                 </span>
                             ),
                         },
@@ -299,15 +300,16 @@ export default function Records({
                             key: 'or_number',
                             header: 'OR # / Check #',
                             cell: (r) =>
-                                r.or_number || r.check_number ? (
+                                r.or_number || r.check_number || r.cash ? (
                                     <span className="block">
                                         <span className="block">{r.or_number ?? '—'}</span>
                                         <span className="text-muted-foreground text-xs">
                                             {[
                                                 r.or_date && prettyDate(r.or_date),
+                                                r.cash && `cash${r.check_date ? ` ${prettyDate(r.check_date)}` : ''}`,
                                                 r.check_number && `check ${r.check_number}`,
-                                                r.check_date && `deposit ${prettyDate(r.check_date)}`,
-                                                (r.check_number || r.check_date) && (r.check_cleared ? 'cleared' : 'not cleared'),
+                                                !r.cash && r.check_date && `deposit ${prettyDate(r.check_date)}`,
+                                                !r.cash && (r.check_number || r.check_date) && (r.check_cleared ? 'cleared' : 'not cleared'),
                                             ]
                                                 .filter(Boolean)
                                                 .join(' · ')}

@@ -2,22 +2,24 @@ import { DatePicker } from '@/components/date-picker';
 import { Button } from '@/components/glint/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/glint/dialog';
 import { Input } from '@/components/glint/input';
+import { StretchTabs } from '@/components/glint/stretch-tabs';
 import { Label } from '@/components/ui/label';
 import { useCan } from '@/hooks/use-can';
 import { isoDate, peso, type AccountingRecord } from '@/lib/records';
 import { useForm } from '@inertiajs/react';
 import { useEffect } from 'react';
 
-/** "Mark paid" from the list: only the check and the OR, the rest of the record stays as it is. */
+/** "Mark paid" from the list: only the check (or cash) and the OR, the rest of the record stays as it is. */
 export function PayDialog({ record, onClose }: { record: AccountingRecord | null; onClose: () => void }) {
     const canConfirm = useCan('confirm');
-    const form = useForm({ check_number: '', check_date: '', or_date: '', or_number: '' });
+    const form = useForm({ cash: false as boolean, check_number: '', check_date: '', or_date: '', or_number: '' });
     const { data, setData, errors, processing } = form;
 
     useEffect(() => {
         if (!record) return;
         form.clearErrors();
         form.setData({
+            cash: record.cash,
             check_number: record.check_number ?? '',
             check_date: record.check_date ?? '',
             or_date: record.or_date ?? isoDate(new Date()),
@@ -44,14 +46,25 @@ export function PayDialog({ record, onClose }: { record: AccountingRecord | null
                         if (record) form.patch(route('records.pay', record.id), { preserveScroll: true, onSuccess: onClose });
                     }}
                 >
+                    <div className="grid gap-1.5">
+                        <Label>Paid by</Label>
+                        <StretchTabs
+                            label="Paid by"
+                            options={['Check', 'Cash']}
+                            value={data.cash ? 'Cash' : 'Check'}
+                            onChange={(v) => setData('cash', v === 'Cash')}
+                        />
+                    </div>
                     <div className="grid gap-3 sm:grid-cols-2">
+                        {!data.cash && (
+                            <div className="grid gap-1.5">
+                                <Label htmlFor="p-check">Check #</Label>
+                                <Input id="p-check" value={data.check_number} onChange={(e) => setData('check_number', e.target.value)} />
+                                {errors.check_number && <p className="text-destructive text-xs">{errors.check_number}</p>}
+                            </div>
+                        )}
                         <div className="grid gap-1.5">
-                            <Label htmlFor="p-check">Check #</Label>
-                            <Input id="p-check" autoFocus value={data.check_number} onChange={(e) => setData('check_number', e.target.value)} />
-                            {errors.check_number && <p className="text-destructive text-xs">{errors.check_number}</p>}
-                        </div>
-                        <div className="grid gap-1.5">
-                            <Label>Check date (for deposit)</Label>
+                            <Label>{data.cash ? 'Cash date (when paid)' : 'Check date (for deposit)'}</Label>
                             <DatePicker value={data.check_date} onChange={(v) => setData('check_date', v)} clearable />
                             {errors.check_date && <p className="text-destructive text-xs">{errors.check_date}</p>}
                         </div>

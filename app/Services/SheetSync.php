@@ -188,13 +188,13 @@ class SheetSync
         $log->pushed = count($sent);
 
         // Header colours, banding, filter, paid green / unpaid red, dropdowns, ₱ amounts, dates and alignment: once per tab (repeating is harmless, so a cleared cache only redoes it).
-        $key = fn ($tab) => 'sheets-styled-v6:'.($this->sheet->spreadsheetId ?? '').':'.$tab;
+        $key = fn ($tab) => 'sheets-styled-v7:'.($this->sheet->spreadsheetId ?? '').':'.$tab;
         if ($unstyled = array_values(array_filter(array_map('strval', array_keys($next)), fn ($tab) => ! Cache::has($key($tab))))) {
             $col = fn ($column) => array_search($column, array_keys(Record::COLUMNS), true) - 1;
             $this->sheet->styleTabs($unstyled, [
                 'columns' => count($headers),
                 'colors' => [$col('paid') => Record::PAYMENT, $col('check_cleared') => Record::CLEARED],
-                'lists' => [$col('paid') => array_keys(Record::PAYMENT), $col('delivery_status') => Record::DELIVERY, $col('check_cleared') => array_keys(Record::CLEARED)],
+                'lists' => [$col('paid') => array_keys(Record::PAYMENT), $col('delivery_status') => Record::DELIVERY, $col('check_cleared') => array_keys(Record::CLEARED), $col('cash') => Record::PAID_BY],
                 'money' => [$col('si_amount'), $col('amount')],
                 'centered' => [$col('terms_days')],
                 'dates' => array_map($col, Record::DATES),

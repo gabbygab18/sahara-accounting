@@ -647,9 +647,9 @@ export default function Dashboard({
                 <CardTitle
                     hint={
                         <>
-                            Unpaid, but no SI date or terms, so no due date: they never show as overdue.{' '}
+                            The actual SI is missing, or an unpaid invoice has no SI date or terms (so it never shows as overdue).{' '}
                             {noDue.count > 0 && (
-                                <Link href={scoped({ show: 'no-due' })} className="text-primary font-medium hover:underline">
+                                <Link href={scoped({ show: 'missing' })} className="text-primary font-medium hover:underline">
                                     See all {fmt(noDue.count)}
                                 </Link>
                             )}
@@ -659,7 +659,7 @@ export default function Dashboard({
                     Missing details
                 </CardTitle>
                 <ul className="divide-y">
-                    {noDue.rows.length === 0 && <Empty>Every unpaid invoice has its SI date and terms.</Empty>}
+                    {noDue.rows.length === 0 && <Empty>Nothing missing.</Empty>}
                     {noDue.rows.map((r) => (
                         <Row
                             key={r.id}

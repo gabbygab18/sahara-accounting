@@ -1,6 +1,7 @@
 import { ComboInput } from '@/components/combo-input';
 import { DatePicker } from '@/components/date-picker';
 import { Button } from '@/components/glint/button';
+import { Checkbox } from '@/components/glint/checkbox';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/glint/dialog';
 import { Input } from '@/components/glint/input';
 import { Select } from '@/components/glint/select';
@@ -38,6 +39,8 @@ const blank: Form = {
     or_number: '',
     paid: false,
     paid_confirmed: false,
+    cash: false,
+    si_missing: false,
     check_number: '',
     check_date: '',
     check_cleared: false,
@@ -355,42 +358,68 @@ export function RecordDialog({
                             )}
                         </Lines>
                         {lineError('sis') && <p className="text-destructive text-xs">{lineError('sis')}</p>}
-                        <p className="text-right text-sm">
-                            <span className="text-muted-foreground">Total </span>
-                            <b className="tabular-nums">{peso(data.sis.reduce((sum, l) => sum + money(l.amount), 0))}</b>
-                        </p>
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                            <Checkbox
+                                label="Missing the actual SI"
+                                description="The paper copy can't be found. It shows under Missing details on the dashboard."
+                                checked={data.si_missing}
+                                onChange={(e) => setData('si_missing', e.target.checked)}
+                            />
+                            <p className="text-right text-sm">
+                                <span className="text-muted-foreground">Total </span>
+                                <b className="tabular-nums">{peso(data.sis.reduce((sum, l) => sum + money(l.amount), 0))}</b>
+                            </p>
+                        </div>
                     </section>
 
-                    <section className="grid gap-3 border-t pt-4 sm:grid-cols-2">
-                        <Field label="Payment">
-                            {locked ? (
-                                <p className="text-sm text-emerald-600">Paid, confirmed by the admin.</p>
+                    <section className="grid gap-3 border-t pt-4">
+                        <div className="grid gap-3 sm:grid-cols-2">
+                            <Field label="Payment">
+                                {locked ? (
+                                    <p className="text-sm text-emerald-600">Paid, confirmed by the admin.</p>
+                                ) : (
+                                    <>
+                                        <StretchTabs
+                                            label="Payment status"
+                                            options={canConfirm ? ['Unpaid', 'For checking', 'Paid'] : ['Unpaid', 'Paid']}
+                                            value={!data.paid ? 'Unpaid' : canConfirm && !data.paid_confirmed ? 'For checking' : 'Paid'}
+                                            onChange={(v) => setData((d) => ({ ...d, paid: v !== 'Unpaid', paid_confirmed: v === 'Paid' }))}
+                                        />
+                                        {!canConfirm && data.paid && (
+                                            <p className="text-muted-foreground text-xs">The admin double checks it before it counts as paid.</p>
+                                        )}
+                                    </>
+                                )}
+                            </Field>
+                            <Field label="Paid by">
+                                <StretchTabs
+                                    label="Paid by"
+                                    options={['Check', 'Cash']}
+                                    value={data.cash ? 'Cash' : 'Check'}
+                                    onChange={(v) => setData('cash', v === 'Cash')}
+                                />
+                            </Field>
+                        </div>
+                        <div className="grid gap-3 sm:grid-cols-3">
+                            {data.cash ? (
+                                date('check_date', 'Cash date (when paid)')
                             ) : (
                                 <>
-                                    <StretchTabs
-                                        label="Payment status"
-                                        options={canConfirm ? ['Unpaid', 'For checking', 'Paid'] : ['Unpaid', 'Paid']}
-                                        value={!data.paid ? 'Unpaid' : canConfirm && !data.paid_confirmed ? 'For checking' : 'Paid'}
-                                        onChange={(v) => setData((d) => ({ ...d, paid: v !== 'Unpaid', paid_confirmed: v === 'Paid' }))}
-                                    />
-                                    {!canConfirm && data.paid && (
-                                        <p className="text-muted-foreground text-xs">The admin double checks it before it counts as paid.</p>
-                                    )}
+                                    {text('check_number', 'Check #')}
+                                    {date('check_date', 'Check date (for deposit)')}
+                                    <Field label="Check">
+                                        <StretchTabs
+                                            label="Check cleared"
+                                            options={['Not cleared', 'Cleared']}
+                                            value={data.check_cleared ? 'Cleared' : 'Not cleared'}
+                                            onChange={(v) => setData('check_cleared', v === 'Cleared')}
+                                        />
+                                    </Field>
                                 </>
                             )}
-                        </Field>
-                        {text('check_number', 'Check #')}
-                        {date('check_date', 'Check date (for deposit)')}
-                        <Field label="Check">
-                            <StretchTabs
-                                label="Check cleared"
-                                options={['Not cleared', 'Cleared']}
-                                value={data.check_cleared ? 'Cleared' : 'Not cleared'}
-                                onChange={(v) => setData('check_cleared', v === 'Cleared')}
-                            />
-                        </Field>
-                        {date('or_date', 'OR date')}
-                        {text('or_number', 'OR #')}
+                            {date('or_date', 'OR date')}
+                            {text('or_number', 'OR #')}
+                        </div>
                     </section>
 
                     <DialogFooter className="flex-row flex-wrap">

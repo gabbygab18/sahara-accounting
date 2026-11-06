@@ -7,11 +7,13 @@ use Illuminate\Database\Eloquent\Casts\Attribute;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Carbon;
 
 /**
  * One PO's paperwork: group (main company, e.g. Cityland), the company it was sold to, project, PO, its DRs (each
- * with a date and delivery status), its SIs (each with a date and amount), the payment, check and OR.
+ * with a date and delivery status), its SIs (each with a date and amount), the payment (by check or in cash) and OR.
+ * Paid in cash, check_date holds the day the cash came in and there is no check number or clearing.
  *
  * The DR and SI lines live in `drs` / `sis`; setting them also fills the single columns used for search, filters and
  * due dates (first date, numbers joined, overall delivery status, total amount). In the master Google Sheet each
@@ -39,8 +41,9 @@ class Record extends Model
         'terms_days' => 'TERMS (DAYS)',
         'amount' => 'TOTAL AMOUNT',
         'paid' => 'PAYMENT STATUS',
+        'cash' => 'PAID BY',
         'check_number' => 'CHECK #',
-        'check_date' => 'CHECK DATE (DEPOSIT)',
+        'check_date' => 'CHECK / CASH DATE',
         'check_cleared' => 'CHECK CLEARED',
         'or_date' => 'OR DATE',
         'or_number' => 'OR #',
@@ -57,15 +60,18 @@ class Record extends Model
     /** Check cleared as written in the sheet, with its colour there. */
     public const CLEARED = ['Not cleared' => '#fce8b2', 'Cleared' => '#b7e1cd'];
 
+    /** How it was paid, as written in the sheet. */
+    public const PAID_BY = ['Check', 'Cash'];
+
     /** Payment status as written in the sheet, with its colour there. */
     public const PAYMENT = ['Unpaid' => '#f4c7c3', 'For checking' => '#fce8b2', 'Paid' => '#b7e1cd'];
 
     public const DATES = ['po_date', 'dr_date', 'si_date', 'check_date', 'or_date'];
 
     /** Stored fields (the activity log compares these). The DR / SI ones are filled from the lines. */
-    public const FIELDS = ['company', 'sold_to', 'project', 'tin', 'po_date', 'po_number', 'dr_date', 'dr_number', 'delivery_status', 'si_date', 'si_number', 'terms_days', 'amount', 'paid', 'check_number', 'check_date', 'check_cleared', 'or_date', 'or_number'];
+    public const FIELDS = ['company', 'sold_to', 'project', 'tin', 'po_date', 'po_number', 'dr_date', 'dr_number', 'delivery_status', 'si_date', 'si_number', 'terms_days', 'amount', 'paid', 'cash', 'check_number', 'check_date', 'check_cleared', 'or_date', 'or_number'];
 
-    protected $fillable = [...self::FIELDS, 'drs', 'sis', 'paid_confirmed', 'user_id', 'synced_at', 'pending_sync'];
+    protected $fillable = [...self::FIELDS, 'si_missing', 'drs', 'sis', 'paid_confirmed', 'user_id', 'synced_at', 'pending_sync'];
 
     protected $hidden = ['synced_at', 'pending_sync', 'deleted_at'];
 
@@ -81,6 +87,8 @@ class Record extends Model
             'paid' => 'boolean',
             'paid_confirmed' => 'boolean',
             'check_cleared' => 'boolean',
+            'cash' => 'boolean',
+            'si_missing' => 'boolean',
             'terms_days' => 'integer',
             'synced_at' => 'datetime',
             'pending_sync' => 'boolean',
@@ -194,6 +202,16 @@ class Record extends Model
         return null;
     }
 
+    /** What is missing, e.g. "actual SI and SI date": the paper SI (marked lost), or, while unpaid, the SI date or terms. */
+    public function missing(): ?string
+    {
+        return Arr::join(array_filter([
+            $this->si_missing ? 'actual SI' : null,
+            ! $this->paid && ! $this->si_date ? 'SI date' : null,
+            ! $this->paid && $this->terms_days === null ? 'terms' : null,
+        ]), ', ', ' and ') ?: null;
+    }
+
     public function isOverdue(): bool
     {
         return ! $this->paid && ($due = $this->dueOn()) && $due->lt(today());
@@ -233,8 +251,10 @@ class Record extends Model
             return match (true) {
                 in_array($column, self::DATES, true) => $this->{$column}?->format('Y-m-d'),
                 $column === 'paid' => ['unpaid' => 'Unpaid', 'checking' => 'For checking', 'paid' => 'Paid'][$this->payment()],
+                // Blank until there is a check (or cash) to tell.
+                $column === 'cash' => $this->cash ? 'Cash' : ($this->check_number || $this->check_date ? 'Check' : null),
                 // Blank until there is a check to clear.
-                $column === 'check_cleared' => $this->check_cleared ? 'Cleared' : ($this->check_number || $this->check_date ? 'Not cleared' : null),
+                $column === 'check_cleared' => $this->cash ? null : ($this->check_cleared ? 'Cleared' : ($this->check_number || $this->check_date ? 'Not cleared' : null)),
                 $column === 'amount' => (float) $this->amount,
                 default => $this->{$column},
             };
@@ -256,6 +276,7 @@ class Record extends Model
                 in_array($column, self::DATES, true) => self::date($v),
                 $column === 'paid' => (bool) preg_match('/^(paid|yes|y|true|1)\b/i', $text),
                 $column === 'check_cleared' => (bool) preg_match('/^(cleared|yes|y|true|1)\b/i', $text),
+                $column === 'cash' => (bool) preg_match('/^cash/i', $text),
                 $column === 'terms_days' => $text === '' ? null : (preg_match('/\d+/', $text, $m) ? (int) $m[0] : (preg_match('/^(cod|cash)/i', $text) ? 0 : null)),
                 $column === 'company' => $text,
                 default => $text === '' ? null : $text,

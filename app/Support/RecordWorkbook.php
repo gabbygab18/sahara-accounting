@@ -34,7 +34,8 @@ class RecordWorkbook
         'amount' => ['TOTALAMOUNT', 'AMOUNT', 'TOTAL', 'TOTALAMOUNTDUE', 'AMOUNTDUE'],
         'paid' => ['PAYMENTSTATUS', 'PAYMENT', 'PAID', 'STATUS'],
         'check_number' => ['CHECK', 'CHECKNO', 'CHECKNUMBER', 'CHEQUE', 'CHEQUENO', 'CHECKNUM'],
-        'check_date' => ['CHECKDATE', 'CHECKDATEDEPOSIT', 'DEPOSITDATE', 'DATEOFDEPOSIT', 'CHEQUEDATE'],
+        'cash' => ['PAIDBY', 'PAYMENTMETHOD', 'MODEOFPAYMENT'],
+        'check_date' => ['CHECKDATE', 'CHECKCASHDATE', 'CHECKDATEDEPOSIT', 'DEPOSITDATE', 'DATEOFDEPOSIT', 'CHEQUEDATE'],
         'check_cleared' => ['CHECKCLEARED', 'CLEARED', 'CHECKSTATUS'],
     ];
 

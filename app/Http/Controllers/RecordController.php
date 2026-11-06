@@ -17,17 +17,17 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 /** Records: the tracker itself. Add, edit, delete, search, filter and export. */
 class RecordController extends Controller
 {
-    private const FILTERS = ['q', 'company', 'project', 'delivery', 'payment', 'from', 'to', 'show', 'sort'];
+    private const FILTERS = ['q', 'company', 'project', 'delivery', 'payment', 'from', 'to', 'show', 'order'];
 
     /** ?show= lists from the summary: an unpaid age group (Record::AGING), or delivered but not yet invoiced. */
-    public const SHOWS = ['not-invoiced' => 'Delivered, not yet invoiced'];
+    public const SHOWS = ['not-invoiced' => 'Delivered, not yet invoiced', 'missing' => 'Missing details (actual SI, SI date or terms)'];
 
     public function index(Request $request): Response
     {
         $filtered = $this->filtered($request);
 
         return Inertia::render('records/index', [
-            'records' => ($request->sort === 'latest'
+            'records' => ($request->order === 'latest'
                 ? (clone $filtered)->latest('id')
                 // In SI number order (1, 2, 3...) so a skipped receipt shows; "+ 0" reads "185561, 185562" as 185561 in MySQL and SQLite.
                 : (clone $filtered)->orderByRaw('si_number IS NULL')->orderByRaw('si_number + 0')->orderBy('si_number')->orderBy('id'))
@@ -75,16 +75,17 @@ class RecordController extends Controller
         return back()->with('success', "Confirmed payment of {$record->label()}.");
     }
 
-    /** "Mark paid" from the list: the check and the OR. From an agent it waits for the admin's double check. */
+    /** "Mark paid" from the list: the check (or cash) and the OR. From an agent it waits for the admin's double check. */
     public function pay(Request $request, Record $record): RedirectResponse
     {
         $data = $request->validate([
+            'cash' => ['boolean'],
             'check_number' => ['nullable', 'string', 'max:100'],
             'check_date' => ['nullable', 'date'],
             'or_date' => ['nullable', 'date'],
             'or_number' => ['nullable', 'string', 'max:100'],
         ]);
-        $record->fill([...array_map(fn ($v) => is_string($v) ? trim($v) : $v, $data), 'paid' => true, 'paid_confirmed' => $request->user()->can('confirm')])->pending_sync = true;
+        $record->fill([...self::cashOrCheck(array_map(fn ($v) => is_string($v) ? trim($v) : $v, $data)), 'paid' => true, 'paid_confirmed' => $request->user()->can('confirm')])->pending_sync = true;
         Activity::log($request->user(), 'edited', $record);
         $record->save();
         $this->syncSheetSoon();
@@ -140,6 +141,8 @@ class RecordController extends Controller
             ->when($request->from, fn ($q, $d) => $q->whereRaw('COALESCE(si_date, dr_date) >= ?', [$d]))
             ->when($request->to, fn ($q, $d) => $q->whereRaw('COALESCE(si_date, dr_date) <= ?', [$d]))
             ->when($request->show === 'not-invoiced', fn ($q) => $q->whereNotNull('dr_number')->whereNull('si_number'))
+            ->when($request->show === 'missing', fn ($q) => $q->whereIn('id', Record::get(['id', 'paid', 'si_date', 'terms_days', 'si_missing'])
+                ->filter->missing()->modelKeys()))
             // ponytail: due dates are worked out in PHP (date maths differs per SQL dialect); fine into the tens of thousands
             ->when(isset(Record::AGING[$request->show]), fn ($q) => $q->whereIn('id', Record::where('paid', false)
                 ->get(['id', 'paid', 'si_date', 'terms_days'])->filter(fn ($r) => $r->age() === $request->show)->modelKeys()));
@@ -170,6 +173,14 @@ class RecordController extends Controller
         ];
     }
 
+    /** Cash has no check number and nothing to clear. */
+    private static function cashOrCheck(array $data): array
+    {
+        $data['cash'] = (bool) ($data['cash'] ?? false);
+
+        return $data['cash'] ? [...$data, 'check_number' => null, 'check_cleared' => false] : $data;
+    }
+
     private function validated(Request $request, ?Record $record = null): array
     {
         $data = $request->validate([
@@ -195,6 +206,8 @@ class RecordController extends Controller
             'check_number' => ['nullable', 'string', 'max:100'],
             'check_date' => ['nullable', 'date'],
             'check_cleared' => ['boolean'],
+            'cash' => ['boolean'],
+            'si_missing' => ['boolean'],
         ]);
 
         $data['drs'] ??= [];
@@ -223,6 +236,8 @@ class RecordController extends Controller
             }
         }
         $data['check_cleared'] = $request->boolean('check_cleared');
+        $data['si_missing'] = $request->boolean('si_missing');
+        $data = self::cashOrCheck($data);
         $data['paid_confirmed'] = $data['paid'] && $request->boolean('paid_confirmed');
         if (! $request->user()->can('confirm')) {
             // The agent's "paid" waits for the admin's double check; a confirmed payment stays as the admin left it.

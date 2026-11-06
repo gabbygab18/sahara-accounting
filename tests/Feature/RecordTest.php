@@ -18,7 +18,7 @@ class RecordTest extends TestCase
         return [
             'company' => 'Cityland Dev Corp', 'sold_to' => 'Pines Peak Towers', 'project' => 'Ground up', 'tin' => '008-424-957-000',
             'po_date' => '2026-10-01', 'po_number' => 'PO-114', 'terms_days' => 30, 'paid' => false,
-            'check_number' => null, 'check_date' => null, 'check_cleared' => false, 'or_date' => null, 'or_number' => null, 'paid_confirmed' => false,
+            'check_number' => null, 'check_date' => null, 'check_cleared' => false, 'or_date' => null, 'or_number' => null, 'paid_confirmed' => false, 'cash' => false,
             'drs' => [['date' => '2026-10-05', 'number' => 'DR-1', 'status' => 'Delivered']],
             ...$this->si('194651', 394.45),
             ...$overrides,
@@ -29,6 +29,29 @@ class RecordTest extends TestCase
     private function si(string $number, float $amount, string $date = '2026-10-16'): array
     {
         return ['sis' => [['date' => $date, 'number' => $number, 'amount' => $amount]]];
+    }
+
+    public function test_paid_in_cash()
+    {
+        $this->actingAs(User::factory()->create());
+        $this->post('/records', $this->invoice(['paid' => true, 'paid_confirmed' => true, 'cash' => true, 'check_number' => 'BDO 1', 'check_date' => '2026-11-03', 'check_cleared' => true]))->assertSessionHasNoErrors();
+        $record = Record::sole();
+        // Cash: no check number or clearing; the date is the day the cash came in.
+        $this->assertSame([true, null, false, '2026-11-03'], [$record->cash, $record->check_number, $record->check_cleared, $record->check_date->toDateString()]);
+        $row = array_combine(array_keys(Record::COLUMNS), $record->toRow());
+        $this->assertSame(['Cash', null, '2026-11-03'], [$row['cash'], $row['check_cleared'], $row['check_date']]);
+        $this->assertTrue(Record::fromRow(array_values($row))['cash']);
+        $this->get('/dashboard')->assertInertia(fn ($page) => $page->where('uncleared.count', 0));
+
+        // A lost paper SI shows under Missing details, even when paid.
+        $this->put("/records/{$record->id}", $this->invoice(['paid' => true, 'paid_confirmed' => true, 'si_missing' => true]))->assertSessionHasNoErrors();
+        $this->get('/dashboard')->assertInertia(fn ($page) => $page->where('noDue.count', 1)->where('noDue.rows.0.missing', 'actual SI'));
+        $this->get('/records?show=missing')->assertInertia(fn ($page) => $page->where('records.total', 1));
+
+        // "Mark paid" by check.
+        $this->patch("/records/{$record->id}/pay", ['cash' => false, 'check_number' => 'BDO 2', 'check_date' => '2026-11-04'])->assertSessionHasNoErrors();
+        $this->assertSame([false, 'BDO 2'], [$record->fresh()->cash, $record->fresh()->check_number]);
+        $this->assertSame('Check', array_combine(array_keys(Record::COLUMNS), $record->fresh()->toRow())['cash']);
     }
 
     public function test_an_si_number_is_used_once()
@@ -156,7 +179,7 @@ class RecordTest extends TestCase
 
         // In SI number order, so a gap shows.
         $this->get('/records')->assertInertia(fn ($page) => $page->where('records.data.0.si_number', '194651')->where('records.data.2.si_number', '194655'));
-        $this->get('/records?sort=latest')->assertInertia(fn ($page) => $page->where('records.data.0.si_number', '194655')->where('filters.sort', 'latest'));
+        $this->get('/records?order=latest')->assertInertia(fn ($page) => $page->where('records.data.0.si_number', '194655')->where('filters.order', 'latest'));
 
         $this->get('/dashboard')->assertInertia(fn ($page) => $page
             ->where('totals.paid', 1000)->where('totals.unpaid', 444.45)->where('totals.overdue', 394.45)
