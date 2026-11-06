@@ -9,7 +9,7 @@ import { PayDialog } from '@/components/pay-dialog';
 import { RecordDialog } from '@/components/record-dialog';
 import { ResponsiveTable } from '@/components/responsive-table';
 import { useCan } from '@/hooks/use-can';
-import { Download, Edit, PlusCircle, Search } from '@/icons';
+import { Download, Edit, PlusCircle, Printer, Search } from '@/icons';
 import AppLayout from '@/layouts/app-layout';
 import { fmt, peso, prettyDate, terms, type AccountingRecord, type Paginated, type RecordOptions } from '@/lib/records';
 import { cn } from '@/lib/utils';
@@ -174,6 +174,11 @@ export default function Records({
                             <a href={`${route('records.export')}?${query}${query ? '&' : ''}format=csv`}>
                                 <Button size="sm" variant="outline">
                                     CSV
+                                </Button>
+                            </a>
+                            <a href={`${route('records.export')}?${query}${query ? '&' : ''}format=print`} target="_blank" rel="noopener">
+                                <Button size="sm" variant="outline" startIcon={<Printer className="size-4" />}>
+                                    Print
                                 </Button>
                             </a>
                         </span>

@@ -54,6 +54,16 @@ class RecordTest extends TestCase
         $this->assertSame('Check', array_combine(array_keys(Record::COLUMNS), $record->fresh()->toRow())['cash']);
     }
 
+    public function test_a_group_s_unpaid_invoices_print()
+    {
+        $this->actingAs(User::factory()->create());
+        $this->post('/records', $this->invoice())->assertSessionHasNoErrors();
+        $this->post('/records', $this->invoice(['company' => 'Megaworld', ...$this->si('2', 10)]))->assertSessionHasNoErrors();
+
+        $this->get('/records/export?company=Cityland+Dev+Corp&payment=unpaid&format=print')->assertOk()
+            ->assertSee('Unpaid invoices · Cityland Dev Corp')->assertSee('194651')->assertSee('₱394.45')->assertDontSee('Megaworld');
+    }
+
     public function test_an_si_number_is_used_once()
     {
         $this->actingAs(User::factory()->create());

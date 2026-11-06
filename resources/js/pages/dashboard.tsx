@@ -3,6 +3,7 @@ import { Button } from '@/components/glint/button';
 import { Input } from '@/components/glint/input';
 import { Select } from '@/components/glint/select';
 import { Hyperlink } from '@/components/ui/hyperlink';
+import { useCan } from '@/hooks/use-can';
 import { AlarmClock, ChevronDown, Eye, Receipt, TrendingUp, Wallet } from '@/icons';
 import AppLayout from '@/layouts/app-layout';
 import { fmt, peso, prettyDate } from '@/lib/records';
@@ -346,6 +347,10 @@ export default function Dashboard({
         });
     // Links into Records keep the summary's group and dates.
     const scoped = (params: Record<string, string>) => records({ ...(filters as Record<string, string>), ...params });
+    const canExport = useCan('export');
+    // A group's unpaid invoices to print (or save as PDF) or download, for whoever collects.
+    const unpaidOf = (group: string, format: string) =>
+        `${route('records.export')}?${new URLSearchParams({ ...(filters as Record<string, string>), company: group, payment: 'unpaid', format })}`;
     const tiles = [
         {
             label: 'Unpaid',
@@ -485,14 +490,29 @@ export default function Dashboard({
                                             noteCls={r.late !== null && r.late > 0 ? 'text-destructive' : 'text-muted-foreground'}
                                         />
                                     ))}
-                                    <li className="py-2">
+                                    <li className="flex flex-wrap gap-x-4 gap-y-1 py-2 text-xs font-medium">
                                         <Link
                                             prefetch
                                             href={scoped({ company: g.group, payment: 'unpaid' })}
-                                            className="text-primary text-xs font-medium hover:underline"
+                                            className="text-primary hover:underline"
                                         >
                                             {g.count > g.rows.length ? `See all ${fmt(g.count)} in Records` : 'Open in Records'}
                                         </Link>
+                                        {canExport && (
+                                            <>
+                                                <a
+                                                    href={unpaidOf(g.group, 'print')}
+                                                    target="_blank"
+                                                    rel="noopener"
+                                                    className="text-primary hover:underline"
+                                                >
+                                                    Print or PDF
+                                                </a>
+                                                <a href={unpaidOf(g.group, 'csv')} className="text-primary hover:underline">
+                                                    Download CSV
+                                                </a>
+                                            </>
+                                        )}
                                     </li>
                                 </ul>
                             </details>

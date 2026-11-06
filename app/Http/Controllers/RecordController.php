@@ -27,10 +27,7 @@ class RecordController extends Controller
         $filtered = $this->filtered($request);
 
         return Inertia::render('records/index', [
-            'records' => ($request->order === 'latest'
-                ? (clone $filtered)->latest('id')
-                // In SI number order (1, 2, 3...) so a skipped receipt shows; "+ 0" reads "185561, 185562" as 185561 in MySQL and SQLite.
-                : (clone $filtered)->orderByRaw('si_number IS NULL')->orderByRaw('si_number + 0')->orderBy('si_number')->orderBy('id'))
+            'records' => $this->ordered($request, clone $filtered)
                 ->paginate(25)->withQueryString()
                 ->through(fn (Record $r) => [...$r->toArray(), 'due' => $r->dueOn()?->toDateString(), 'overdue' => $r->isOverdue()]),
             // Totals of everything the filters match, not just this page; only for accounts allowed the summary.
@@ -103,9 +100,19 @@ class RecordController extends Controller
         return back()->with('success', "Deleted {$record->label()}.");
     }
 
-    /** What the filters show, as .xlsx (or .csv with ?format=csv). */
-    public function export(Request $request): BinaryFileResponse|StreamedResponse
+    /** What the filters show, as .xlsx, .csv (?format=csv) or a page to print or save as PDF (?format=print). */
+    public function export(Request $request): BinaryFileResponse|StreamedResponse|\Illuminate\Http\Response
     {
+        if ($request->format === 'print') {
+            return response()->view('print', [
+                'records' => $this->ordered($request, $this->filtered($request))->get(),
+                'title' => $request->payment === 'unpaid' ? 'Unpaid invoices' : 'Records',
+                'group' => $request->company,
+                'from' => $request->from,
+                'to' => $request->to,
+            ]);
+        }
+
         $records = $this->filtered($request)->orderBy('si_date')->orderBy('id')->lazy();
         $name = 'Sahara Accounting '.now()->format('Y-m-d');
 
@@ -125,6 +132,14 @@ class RecordController extends Controller
         RecordWorkbook::save($records, $path);
 
         return response()->download($path, "{$name}.xlsx")->deleteFileAfterSend();
+    }
+
+    /** The last added first (?order=latest), else in SI number order (1, 2, 3...) so a skipped receipt shows. */
+    private function ordered(Request $request, Builder $query): Builder
+    {
+        return $request->order === 'latest' ? $query->latest('id')
+            // "+ 0" reads "185561, 185562" as 185561 in MySQL and SQLite.
+            : $query->orderByRaw('si_number IS NULL')->orderByRaw('si_number + 0')->orderBy('si_number')->orderBy('id');
     }
 
     private function filtered(Request $request): Builder
