@@ -258,6 +258,7 @@ export default function Records({
                                     <span className="block font-medium">{r.si_number ?? '—'}</span>
                                     <span className="text-muted-foreground text-xs">{prettyDate(r.si_date)}</span>
                                     {r.si_missing && <span className="block text-xs font-medium text-amber-600">Actual SI missing</span>}
+                                    {r.wrong_computation && <span className="block text-xs font-medium text-rose-600">Wrong computation</span>}
                                     {(r.booklet_number || r.envelope_number) && (
                                         <span className="text-muted-foreground block text-xs">
                                             {[r.booklet_number && `Booklet ${r.booklet_number}`, r.envelope_number && `Env. ${r.envelope_number}`]

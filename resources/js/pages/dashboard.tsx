@@ -667,7 +667,8 @@ export default function Dashboard({
                 <CardTitle
                     hint={
                         <>
-                            The actual SI is missing, or an unpaid invoice has no SI date or terms (so it never shows as overdue).{' '}
+                            Marked as wrong computation, the actual SI is missing, or an unpaid invoice has no SI date or terms (so it never shows as
+                            overdue).{' '}
                             {noDue.count > 0 && (
                                 <Link href={scoped({ show: 'missing' })} className="text-primary font-medium hover:underline">
                                     See all {fmt(noDue.count)}
@@ -676,16 +677,16 @@ export default function Dashboard({
                         </>
                     }
                 >
-                    Missing details
+                    To recheck
                 </CardTitle>
                 <ul className="divide-y">
-                    {noDue.rows.length === 0 && <Empty>Nothing missing.</Empty>}
+                    {noDue.rows.length === 0 && <Empty>Nothing to recheck.</Empty>}
                     {noDue.rows.map((r) => (
                         <Row
                             key={r.id}
                             r={r}
                             sub={[r.sold_to, r.project].filter(Boolean).join(' · ') || 'No company'}
-                            note={`No ${r.missing}`}
+                            note={r.missing.charAt(0).toUpperCase() + r.missing.slice(1)}
                             noteCls="text-amber-600"
                         />
                     ))}

@@ -31,7 +31,7 @@ class DashboardController extends Controller
             // Dated by the invoice, or by the DR while there is no invoice yet (as in Records).
             ->when($filters['from'] ?? null, fn ($q, $d) => $q->whereRaw('COALESCE(si_date, dr_date) >= ?', [$d]))
             ->when($filters['to'] ?? null, fn ($q, $d) => $q->whereRaw('COALESCE(si_date, dr_date) <= ?', [$d]))
-            ->get(['id', 'company', 'sold_to', 'project', 'si_number', 'dr_number', 'dr_date', 'po_number', 'si_date', 'terms_days', 'amount', 'paid', 'paid_confirmed', 'cash', 'si_missing', 'check_number', 'check_date', 'check_cleared', 'or_date']);
+            ->get(['id', 'company', 'sold_to', 'project', 'si_number', 'dr_number', 'dr_date', 'po_number', 'si_date', 'terms_days', 'amount', 'paid', 'paid_confirmed', 'cash', 'si_missing', 'wrong_computation', 'check_number', 'check_date', 'check_cleared', 'or_date']);
         $sum = fn ($rows) => [
             'count' => $rows->count(),
             'paid' => round($rows->filter(fn ($r) => $r->payment() === 'paid')->sum('amount'), 2),
@@ -44,7 +44,7 @@ class DashboardController extends Controller
         $paidOn = fn (Record $r) => $r->or_date ?? $r->check_date; // the OR, else the check (or the cash)
         $uncleared = $records->filter(fn ($r) => $r->paid && ! $r->cash && ! $r->check_cleared && ($r->check_number || $r->check_date));
         $notInvoiced = $records->filter(fn ($r) => $r->dr_number && ! $r->si_number);
-        $noDue = $records->filter->missing(); // the actual SI lost, or unpaid without an SI date or terms
+        $noDue = $records->filter->missing(); // computed wrong, the actual SI lost, or unpaid without an SI date or terms
 
         return Inertia::render('dashboard', [
             'filters' => array_filter($filters),

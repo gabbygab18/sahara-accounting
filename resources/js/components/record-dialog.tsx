@@ -42,6 +42,7 @@ const blank: Form = {
     cash: false,
     si_missing: false,
     si_cancelled: false,
+    wrong_computation: false,
     booklet_number: '',
     envelope_number: '',
     check_number: '',
@@ -210,6 +211,7 @@ function Review({ data, canConfirm }: { data: Form; canConfirm: boolean }) {
         ],
         ['Actual SI', data.si_missing ? 'Missing' : ''],
         ['Cancelled', data.si_cancelled ? 'Yes, this SI is cancelled' : ''],
+        ['Computation', data.wrong_computation ? 'Wrong, to recheck' : ''],
         ['Booklet #', data.booklet_number ?? ''],
         ['Envelope #', data.envelope_number ?? ''],
         ['Total', peso(data.sis.reduce((sum, l) => sum + money(l.amount), 0))],
@@ -332,7 +334,7 @@ export function RecordDialog({
                             : 'Copy it from the PO, DRs and sales invoices. Only the group is required.'}
                     </DialogDescription>
                 </DialogHeader>
-                <form onSubmit={submit} className="grid gap-5">
+                <form onSubmit={submit} className="grid gap-5" autoComplete="off">
                     {reviewing && <Review data={data} canConfirm={canConfirm} />}
                     <div className={cn('grid gap-5', reviewing && 'hidden')}>
                         <section className="grid gap-3 sm:grid-cols-2">
@@ -444,9 +446,15 @@ export function RecordDialog({
                                     />
                                     <Checkbox
                                         label="Missing the actual SI"
-                                        description="The paper copy can't be found. It shows under Missing details on the dashboard."
+                                        description="The paper copy can't be found. It shows under To recheck on the dashboard."
                                         checked={data.si_missing}
                                         onChange={(e) => setData('si_missing', e.target.checked)}
+                                    />
+                                    <Checkbox
+                                        label="Wrong computation"
+                                        description="For the agent to recheck. It shows under To recheck on the dashboard."
+                                        checked={data.wrong_computation}
+                                        onChange={(e) => setData('wrong_computation', e.target.checked)}
                                     />
                                 </div>
                                 <p className="text-right text-sm">

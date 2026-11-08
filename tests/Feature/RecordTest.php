@@ -45,7 +45,7 @@ class RecordTest extends TestCase
 
         // A lost paper SI shows under Missing details, even when paid.
         $this->put("/records/{$record->id}", $this->invoice(['paid' => true, 'paid_confirmed' => true, 'si_missing' => true]))->assertSessionHasNoErrors();
-        $this->get('/dashboard')->assertInertia(fn ($page) => $page->where('noDue.count', 1)->where('noDue.rows.0.missing', 'actual SI'));
+        $this->get('/dashboard')->assertInertia(fn ($page) => $page->where('noDue.count', 1)->where('noDue.rows.0.missing', 'no actual SI'));
         $this->get('/records?show=missing')->assertInertia(fn ($page) => $page->where('records.total', 1));
 
         // "Mark paid" by check.
@@ -85,12 +85,24 @@ class RecordTest extends TestCase
         $b = Record::create($this->invoice([...$this->si('2', 10)]));
         $cancelled = Record::create($this->invoice([...$this->si('3', 10), 'si_cancelled' => true])); // not owed: left as it is
 
-        $this->patch('/records/pay', ['ids' => [$a->id, $b->id, $cancelled->id], 'check_number' => ' 5521 ', 'or_number' => '88'])
-            ->assertSessionHas('success', 'Marked 2 records paid.');
-        foreach ([$a, $b] as $record) {
-            $this->assertSame([true, true, '5521', '88'], [$record->fresh()->paid, $record->fresh()->paid_confirmed, $record->fresh()->check_number, $record->fresh()->or_number]);
-        }
+        $this->patch('/records/pay', ['or_date' => '2026-11-07', 'rows' => [
+            ['id' => $a->id, 'check_number' => ' 5521 ', 'check_date' => '2026-11-10', 'or_number' => '88'],
+            ['id' => $b->id, 'check_number' => '5522', 'check_date' => null, 'or_number' => '89'],
+            ['id' => $cancelled->id, 'check_number' => '5523'],
+        ]])->assertSessionHas('success', 'Marked 2 records paid.');
+        $paid = fn (Record $r) => [$r->paid, $r->paid_confirmed, $r->check_number, $r->check_date?->toDateString(), $r->or_number, $r->or_date->toDateString()];
+        $this->assertSame([true, true, '5521', '2026-11-10', '88', '2026-11-07'], $paid($a->fresh()));
+        $this->assertSame([true, true, '5522', null, '89', '2026-11-07'], $paid($b->fresh()));
         $this->assertFalse($cancelled->fresh()->paid);
+    }
+
+    public function test_a_wrong_computation_is_flagged_to_recheck()
+    {
+        $this->actingAs(User::factory()->create());
+        $this->post('/records', $this->invoice(['wrong_computation' => true]))->assertSessionHasNoErrors();
+        $this->assertSame('Wrong computation', Record::sole()->missing());
+        $this->get('/dashboard')->assertInertia(fn ($page) => $page->where('noDue.count', 1)->where('noDue.rows.0.missing', 'Wrong computation'));
+        $this->get('/records?show=missing')->assertInertia(fn ($page) => $page->where('records.total', 1));
     }
 
     public function test_a_cancelled_si_and_where_it_is_filed()

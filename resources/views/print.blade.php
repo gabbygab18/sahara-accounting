@@ -49,7 +49,7 @@
             @forelse ($records as $r)
                 @php($late = $r->daysLate())
                 <tr>
-                    <td>{{ $r->si_number ?? '—' }}@if ($r->si_missing)<br><span class="late">Actual SI missing</span>@endif</td>
+                    <td>{{ $r->si_number ?? '—' }}@if ($r->si_missing)<br><span class="late">Actual SI missing</span>@endif @if ($r->wrong_computation)<br><span class="late">Wrong computation</span>@endif</td>
                     <td>{{ $r->si_date?->format('M j, Y') ?? '—' }}</td>
                     <td>{{ implode(' · ', array_filter([$r->sold_to, $r->project])) ?: '—' }}@unless ($group)<br><span class="muted">{{ $r->company }}</span>@endunless</td>
                     <td>{{ $r->po_number ?? '—' }}@if ($r->dr_number)<br><span class="muted">DR {{ $r->dr_number }}</span>@endif</td>

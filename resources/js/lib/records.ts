@@ -40,6 +40,7 @@ export interface AccountingRecord {
     paid_confirmed: boolean;
     /** The paper SI can't be found. */
     si_missing: boolean;
+    wrong_computation: boolean;
     /** The SI was cancelled: kept so its number is accounted for, left out of what is owed. */
     si_cancelled: boolean;
     /** Where the paper is filed. */

@@ -8,6 +8,7 @@ use App\Support\RecordWorkbook;
 use Illuminate\Database\Eloquent\Builder;
 use Illuminate\Http\RedirectResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Str;
 use Illuminate\Validation\ValidationException;
 use Inertia\Inertia;
@@ -21,7 +22,7 @@ class RecordController extends Controller
     private const FILTERS = ['q', 'company', 'project', 'delivery', 'payment', 'from', 'to', 'show', 'order'];
 
     /** ?show= lists from the summary: an unpaid age group (Record::AGING), or delivered but not yet invoiced. */
-    public const SHOWS = ['not-invoiced' => 'Delivered, not yet invoiced', 'missing' => 'Missing details (actual SI, SI date or terms)'];
+    public const SHOWS = ['not-invoiced' => 'Delivered, not yet invoiced', 'missing' => 'To recheck (wrong computation, or no actual SI, SI date or terms)'];
 
     public function index(Request $request): Response
     {
@@ -96,27 +97,34 @@ class RecordController extends Controller
         return back()->with('success', "Marked {$record->label()} paid.");
     }
 
-    /** The ticked unpaid records, paid by one check (or cash) and OR. */
+    /** The ticked unpaid records: paid by check or cash on one OR date, each with its own check #, check date and OR #. */
     public function payMany(Request $request): RedirectResponse
     {
-        $ids = $request->validate(['ids' => ['required', 'array', 'max:500'], 'ids.*' => ['integer']])['ids'];
-        $records = Record::whereIn('id', $ids)->where('paid', false)->where('si_cancelled', false)->get();
-        $this->markPaid($request, $records);
+        $rows = collect($request->validate([
+            'rows' => ['required', 'array', 'max:500'],
+            'rows.*.id' => ['required', 'integer'],
+            'rows.*.check_number' => ['nullable', 'string', 'max:100'],
+            'rows.*.check_date' => ['nullable', 'date'],
+            'rows.*.or_number' => ['nullable', 'string', 'max:100'],
+        ])['rows'])->keyBy('id');
+        $records = Record::whereIn('id', $rows->keys())->where('paid', false)->where('si_cancelled', false)->get();
+        $this->markPaid($request, $records, fn (Record $r) => Arr::except($rows[$r->id], 'id'));
 
         return back()->with('success', 'Marked '.$records->count().' '.Str::plural('record', $records->count()).' paid.');
     }
 
-    private function markPaid(Request $request, iterable $records): void
+    /** @param  (callable(Record): array)|null  $own  what differs per record */
+    private function markPaid(Request $request, iterable $records, ?callable $own = null): void
     {
-        $data = $request->validate([
+        $shared = $request->validate([
             'cash' => ['boolean'],
             'check_number' => ['nullable', 'string', 'max:100'],
             'check_date' => ['nullable', 'date'],
             'or_date' => ['nullable', 'date'],
             'or_number' => ['nullable', 'string', 'max:100'],
         ]);
-        $data = self::cashOrCheck(array_map(fn ($v) => is_string($v) ? trim($v) : $v, $data));
         foreach ($records as $record) {
+            $data = self::cashOrCheck(array_map(fn ($v) => is_string($v) ? trim($v) : $v, [...$shared, ...($own ? $own($record) : [])]));
             $record->fill([...$data, 'paid' => true, 'paid_confirmed' => $request->user()->can('confirm')])->pending_sync = true;
             Activity::log($request->user(), 'edited', $record);
             $record->save();
@@ -190,7 +198,7 @@ class RecordController extends Controller
             ->when($request->from, fn ($q, $d) => $q->whereRaw('COALESCE(si_date, dr_date) >= ?', [$d]))
             ->when($request->to, fn ($q, $d) => $q->whereRaw('COALESCE(si_date, dr_date) <= ?', [$d]))
             ->when($request->show === 'not-invoiced', fn ($q) => $q->whereNotNull('dr_number')->whereNull('si_number'))
-            ->when($request->show === 'missing', fn ($q) => $q->whereIn('id', Record::get(['id', 'paid', 'si_date', 'terms_days', 'si_missing'])
+            ->when($request->show === 'missing', fn ($q) => $q->whereIn('id', Record::get(['id', 'paid', 'si_date', 'terms_days', 'si_missing', 'si_cancelled', 'wrong_computation'])
                 ->filter->missing()->modelKeys()))
             // ponytail: due dates are worked out in PHP (date maths differs per SQL dialect); fine into the tens of thousands
             ->when(isset(Record::AGING[$request->show]), fn ($q) => $q->whereIn('id', Record::where('paid', false)
@@ -258,6 +266,7 @@ class RecordController extends Controller
             'cash' => ['boolean'],
             'si_missing' => ['boolean'],
             'si_cancelled' => ['boolean'],
+            'wrong_computation' => ['boolean'],
             'booklet_number' => ['nullable', 'string', 'max:50'],
             'envelope_number' => ['nullable', 'string', 'max:50'],
         ]);
@@ -290,6 +299,7 @@ class RecordController extends Controller
         $data['check_cleared'] = $request->boolean('check_cleared');
         $data['si_missing'] = $request->boolean('si_missing');
         $data['si_cancelled'] = $request->boolean('si_cancelled');
+        $data['wrong_computation'] = $request->boolean('wrong_computation');
         $data = self::cashOrCheck($data);
         $data['paid_confirmed'] = $data['paid'] && $request->boolean('paid_confirmed');
         if (! $request->user()->can('confirm')) {

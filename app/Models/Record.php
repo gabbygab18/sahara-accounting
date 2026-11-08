@@ -73,7 +73,7 @@ class Record extends Model
     /** Stored fields (the activity log compares these). The DR / SI ones are filled from the lines. */
     public const FIELDS = ['company', 'sold_to', 'project', 'tin', 'po_date', 'po_number', 'dr_date', 'dr_number', 'delivery_status', 'si_date', 'si_number', 'terms_days', 'amount', 'paid', 'cash', 'check_number', 'check_date', 'check_cleared', 'or_date', 'or_number', 'booklet_number', 'envelope_number', 'si_cancelled'];
 
-    protected $fillable = [...self::FIELDS, 'si_missing', 'drs', 'sis', 'paid_confirmed', 'user_id', 'synced_at', 'pending_sync'];
+    protected $fillable = [...self::FIELDS, 'si_missing', 'wrong_computation', 'drs', 'sis', 'paid_confirmed', 'user_id', 'synced_at', 'pending_sync'];
 
     protected $hidden = ['synced_at', 'pending_sync', 'deleted_at'];
 
@@ -92,6 +92,7 @@ class Record extends Model
             'cash' => 'boolean',
             'si_missing' => 'boolean',
             'si_cancelled' => 'boolean',
+            'wrong_computation' => 'boolean',
             'terms_days' => 'integer',
             'synced_at' => 'datetime',
             'pending_sync' => 'boolean',
@@ -205,14 +206,19 @@ class Record extends Model
         return null;
     }
 
-    /** What is missing, e.g. "actual SI and SI date": the paper SI (marked lost), or, while unpaid, the SI date or terms. */
+    /**
+     * What to recheck, e.g. "Wrong computation, no actual SI and SI date": an amount flagged as computed wrong, the paper
+     * SI (marked lost), or, while unpaid, the SI date or terms.
+     */
     public function missing(): ?string
     {
-        return Arr::join(array_filter([
+        $missing = Arr::join(array_filter([
             $this->si_missing ? 'actual SI' : null,
             ! $this->paid && ! $this->si_cancelled && ! $this->si_date ? 'SI date' : null,
             ! $this->paid && ! $this->si_cancelled && $this->terms_days === null ? 'terms' : null,
-        ]), ', ', ' and ') ?: null;
+        ]), ', ', ' and ');
+
+        return implode(', ', array_filter([$this->wrong_computation ? 'Wrong computation' : null, $missing ? "no {$missing}" : null])) ?: null;
     }
 
     public function isOverdue(): bool
