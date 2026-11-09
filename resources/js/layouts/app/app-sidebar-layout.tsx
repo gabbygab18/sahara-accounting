@@ -266,6 +266,7 @@ export default function AppSidebarLayout({ children, breadcrumbs = [] }: { child
                         {auth.can.includes('records') && (
                             <form
                                 className="mx-2 hidden min-w-0 flex-1 md:block lg:mx-4"
+                                autoComplete="off"
                                 onSubmit={(e) => {
                                     e.preventDefault();
                                     router.get(route('records.index'), q ? { q } : {});

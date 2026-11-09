@@ -226,10 +226,17 @@ class Record extends Model
         return ! $this->paid && ! $this->si_cancelled && ($due = $this->dueOn()) && $due->lt(today());
     }
 
-    public function scopeSearch(Builder $q, string $text): void
+    /** What the search can be narrowed to: ?in= => column. Booklet and envelope match whole (booklet 3 is not 30). */
+    public const SEARCH_IN = ['si' => 'si_number', 'booklet' => 'booklet_number', 'envelope' => 'envelope_number', 'or' => 'or_number', 'check' => 'check_number', 'po' => 'po_number', 'dr' => 'dr_number'];
+
+    public function scopeSearch(Builder $q, string $text, ?string $in = null): void
     {
-        $like = '%'.trim($text).'%';
-        $q->where(fn ($q) => $q->whereAny(['company', 'sold_to', 'project', 'tin', 'po_number', 'dr_number', 'si_number', 'or_number', 'check_number', 'booklet_number', 'envelope_number'], 'like', $like));
+        $text = trim($text);
+        match ($column = self::SEARCH_IN[$in] ?? null) {
+            null => $q->where(fn ($q) => $q->whereAny(['company', 'sold_to', 'project', 'tin', 'po_number', 'dr_number', 'si_number', 'or_number', 'check_number', 'booklet_number', 'envelope_number'], 'like', "%{$text}%")),
+            'booklet_number', 'envelope_number' => $q->where($column, $text),
+            default => $q->where($column, 'like', "%{$text}%"),
+        };
     }
 
     /** "SI 194651 · Cityland Dev Corp / Pines Peak Towers" for the activity log. */

@@ -19,7 +19,7 @@ use Symfony\Component\HttpFoundation\StreamedResponse;
 /** Records: the tracker itself. Add, edit, delete, search, filter and export. */
 class RecordController extends Controller
 {
-    private const FILTERS = ['q', 'company', 'project', 'delivery', 'payment', 'from', 'to', 'show', 'order'];
+    private const FILTERS = ['q', 'in', 'company', 'project', 'delivery', 'payment', 'from', 'to', 'show', 'order'];
 
     /** ?show= lists from the summary: an unpaid age group (Record::AGING), or delivered but not yet invoiced. */
     public const SHOWS = ['not-invoiced' => 'Delivered, not yet invoiced', 'missing' => 'To recheck (wrong computation, or no actual SI, SI date or terms)'];
@@ -187,7 +187,7 @@ class RecordController extends Controller
     private function filtered(Request $request): Builder
     {
         return Record::query()
-            ->when($request->q, fn ($q, $s) => $q->search($s))
+            ->when($request->q, fn ($q, $s) => $q->search($s, $request->in))
             ->when($request->company, fn ($q, $c) => $q->where('company', $c))
             ->when($request->project, fn ($q, $p) => $q->where('project', $p))
             ->when($request->delivery, fn ($q, $d) => $q->where('delivery_status', $d))

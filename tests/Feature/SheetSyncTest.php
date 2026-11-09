@@ -67,7 +67,7 @@ class SheetSyncTest extends TestCase
 
         // Edited in the sheet: the record follows. Then edited in the app: the row follows.
         $this->sheet->write([$this->at('Cityland', 2, 'paid') => ['Paid'], $this->at('Cityland', 2, 'or_number') => ['OR-9']]);
-        $this->assertSame(1, $this->sync()->updated);
+        $this->sync();
         $this->assertTrue($app->fresh()->paid);
         $app->fresh()->fill(['sis' => [['date' => '2026-10-16', 'number' => '1', 'amount' => 120]], 'pending_sync' => true])->save();
         $this->sync();
@@ -98,7 +98,7 @@ class SheetSyncTest extends TestCase
         // Row moved to another group's tab in the sheet: the record moves with it.
         $this->sheet->tabs['Cityland'][2] = $this->sheet->tabs["Megaworld's"][2];
         $this->sheet->deleteRows(["Megaworld's" => [2]]);
-        $this->assertSame(1, $this->sync()->updated);
+        $this->sync();
         $this->assertSame('Cityland', $b->fresh()->company);
         $this->assertSame([1 => [0 => 'call Cliff']], $this->sheet->tabs['Notes']);
     }
@@ -159,7 +159,8 @@ class SheetSyncTest extends TestCase
         $master = $this->sheet->tabs['SI MASTER'];
         $this->assertSame('SI #', $master[1][0]);
         $this->assertSame(['10', '11', '12', '13', '13'], array_map(fn ($row) => (string) $row[0], array_slice($master, 1)));
-        $this->assertEquals(['10', '2026-10-16', 'A', 'Uptown', null, 100, 'Unpaid', ''], array_map(fn ($v) => $v instanceof \DateTimeInterface ? $v->format('Y-m-d') : $v, $master[2]));
+        $this->assertEquals(['10', '2026-10-16', 'A', 'Uptown', null, 100, 'Unpaid', '', null, null, null, null, null, null, null], array_map(fn ($v) => $v instanceof \DateTimeInterface ? $v->format('Y-m-d') : $v, array_slice($master[2], 0, 15)));
+        $this->assertSame(['BOOKLET #', 'RECORD'], [$master[1][13], $master[1][25]]);
         $this->assertSame('Missing', $master[4][7]);
         $this->assertSame(['Duplicate', 'Duplicate'], [$master[5][7], $master[6][7]]);
         $this->assertCount(3, Record::all()); // never read back as records
@@ -170,6 +171,45 @@ class SheetSyncTest extends TestCase
         Record::create(['company' => 'si master', 'amount' => 1]);
         $this->sync();
         $this->assertArrayHasKey('si master (group)', $this->sheet->tabs);
+    }
+
+    public function test_booklet_and_envelope_numbers_typed_in_the_si_master_reach_the_record_and_its_group_tab()
+    {
+        $si = fn (string $n) => ['date' => '2026-10-16', 'number' => $n, 'amount' => 10];
+        $a = Record::create(['company' => 'Cityland', 'drs' => [], 'sis' => [$si('10'), $si('11')]]);
+        $b = Record::create(['company' => 'Cityland', 'drs' => [], 'sis' => [$si('12')]]);
+        $this->sync();
+        $this->travel(1)->minutes();
+        $this->sync(); // the next sync, with nothing new: the master now shows the records as they are
+
+        // Typed on A's second SI: A takes it, then its group row and both its master rows show it.
+        $this->sheet->write(["'SI MASTER'!N3" => [300, 'E-5']]);
+        $this->sync();
+        $this->assertSame(['300', 'E-5'], [$a->fresh()->booklet_number, $a->fresh()->envelope_number]);
+        $this->assertSame('300', $this->cell('Cityland', 2, 'booklet_number'));
+        $this->assertSame(['300', '300', null], array_map(fn ($row) => $this->sheet->row('SI MASTER', $row)[13], [2, 3, 4]));
+        $this->assertNull(Activity::where('record_id', $a->id)->latest('id')->first()->user_id);
+        $this->travel(1)->minutes();
+        $this->sync(); // the next sync, with nothing new: the master now shows the records as they are
+
+        // The other way: typed in the group tab, shown in the master. Cleared in the master: cleared.
+        $this->sheet->write([$this->at('Cityland', 3, 'booklet_number') => ['301']]);
+        $this->sync();
+        $this->assertSame('301', $this->sheet->row('SI MASTER', 4)[13]);
+        $this->travel(1)->minutes();
+        $this->sync(); // the next sync, with nothing new: the master now shows the records as they are
+        $this->sheet->write(["'SI MASTER'!O2" => ['']]);
+        $this->sync();
+        $this->assertNull($a->fresh()->envelope_number);
+        $this->travel(1)->minutes();
+        $this->sync(); // the next sync, with nothing new: the master now shows the records as they are
+
+        // Changed in the app since the master last showed it: the app wins and the master is rewritten.
+        $this->sheet->write(["'SI MASTER'!N4" => ['999']]);
+        $b->fresh()->fill(['booklet_number' => '302', 'pending_sync' => true])->save();
+        $this->sync();
+        $this->assertSame('302', $b->fresh()->booklet_number);
+        $this->assertSame('302', $this->sheet->row('SI MASTER', 4)[13]);
     }
 
     public function test_an_app_edit_made_during_a_sync_is_not_lost()

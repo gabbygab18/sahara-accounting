@@ -363,6 +363,11 @@ class GoogleSheet
         }
         // Room for every row (writing past the grid is refused), then the old cells cleared and the new ones written.
         $requests[] = ['updateSheetProperties' => ['properties' => ['sheetId' => $props['sheetId'], 'gridProperties' => ['rowCount' => max(count($rows) + 20, 100)]], 'fields' => 'gridProperties.rowCount']];
+        // Column Z holds the record ids: there and hidden.
+        if (($missing = 26 - ($props['gridProperties']['columnCount'] ?? 26)) > 0) {
+            $requests[] = ['appendDimension' => ['sheetId' => $props['sheetId'], 'dimension' => 'COLUMNS', 'length' => $missing]];
+        }
+        $requests[] = ['updateDimensionProperties' => ['range' => ['sheetId' => $props['sheetId'], 'dimension' => 'COLUMNS', 'startIndex' => 25, 'endIndex' => 26], 'properties' => ['hiddenByUser' => true], 'fields' => 'hiddenByUser']];
         $this->http()->post($url.':batchUpdate', ['requests' => $requests])->throw();
         $this->http()->post($url.'/values:batchClear', ['ranges' => [self::range($props['title'], 'A:Z')]])->throw();
         $this->http()->put($url.'/values/'.rawurlencode(self::range($props['title'], 'A1')).'?valueInputOption=USER_ENTERED', [

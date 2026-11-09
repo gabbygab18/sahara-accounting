@@ -5,6 +5,8 @@ namespace App\Services;
 use App\Models\Activity;
 use App\Models\Record;
 use App\Models\SyncLog;
+use Illuminate\Database\Eloquent\Collection;
+use Illuminate\Support\Arr;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use RuntimeException;
@@ -27,8 +29,14 @@ class SheetSync
     /** The single tab used before one tab per group: never read. Delete it once the group tabs are filled. */
     public const LEGACY_TAB = 'RECORDS';
 
-    /** Every SI number in order, a "Missing" row for each one skipped: written by the app, never read. */
+    /**
+     * Every SI number in order, a "Missing" row for each one skipped, written by the app. Only its booklet and envelope #
+     * are read back (its record's id is in hidden column Z); the rest is rewritten from the records.
+     */
     public const MASTER_TAB = 'SI MASTER';
+
+    /** Columns of the SI master read back: booklet #, envelope #. */
+    private const MASTER_FILING = [13 => 'booklet_number', 14 => 'envelope_number'];
 
     /** ponytail: the master lists at most this many numbers (the highest); raise it if a booklet run gets longer */
     private const MASTER_ROWS = 5000;
@@ -113,7 +121,9 @@ class SheetSync
         // ponytail: appends go below the last row read; a row typed in the same second can be overwritten
         $next = array_map(fn ($rows) => max([1, ...array_keys($rows)]) + 1, $tabs);
 
-        DB::transaction(function () use ($tabs, $stale, $records, $headers, $tabOf, $log, &$lower, &$writes, &$sent, &$gone, &$seen, &$append, &$next) {
+        DB::transaction(function () use ($read, $tabs, $stale, $records, $headers, $tabOf, $log, &$lower, &$writes, &$sent, &$gone, &$seen, &$append, &$next) {
+            $this->readMaster($read[GoogleSheet::range(self::MASTER_TAB, 'A1:Z')] ?? [], $records, $log);
+
             foreach ($tabs as $tab => $rows) {
                 $tab = (string) $tab; // a tab named "123" is an int key
                 foreach ($rows as $row => $cells) {
@@ -228,52 +238,89 @@ class SheetSync
     }
 
     /**
+     * Booklet / envelope # typed in the SI master: its record follows, and so its row in the group tab. A cell counts as
+     * typed only if the record has not changed since the master last showed it (else the master is behind and gets
+     * rewritten). A record with several SIs takes the first of its rows that differs.
+     */
+    private function readMaster(array $rows, Collection $records, SyncLog $log): void
+    {
+        $shownAt = Cache::get($this->masterKey('at'));
+        foreach ($shownAt ? array_slice($rows, 1) : [] as $cells) {
+            $record = preg_match('/^r(\d+)$/', trim((string) ($cells[25] ?? '')), $m) ? $records->get((int) $m[1]) : null;
+            if (! $record || $record->trashed() || $record->pending_sync || $record->updated_at->getTimestamp() >= $shownAt) {
+                continue;
+            }
+            foreach (self::MASTER_FILING as $i => $field) {
+                $record->{$field} = ($value = trim((string) ($cells[$i] ?? ''))) === '' ? null : mb_substr($value, 0, 50);
+            }
+            if ($record->isDirty()) {
+                Activity::log(null, 'edited', $record);
+                $record->pending_sync = true; // so its group tab row is written below
+                $record->save();
+                $log->updated++;
+            }
+        }
+    }
+
+    private function masterKey(string $what): string
+    {
+        return "sheets-master-{$what}:".($this->sheet->spreadsheetId ?? '');
+    }
+
+    /**
      * The "mother file": one row per SI number from the lowest to the highest, so a lost or hidden receipt shows as a
      * blank "Missing" row, and one entered twice as "Duplicate". Rewritten only when its rows change.
      */
     private function writeMaster(): void
     {
-        $lines = []; // SI number => [row, ...]
+        $shownAt = now()->getTimestamp(); // the master shows the records as they are from here on
+        $lines = []; // SI number => [[cells A-G, cells I-Z], ...]
         foreach (Record::get() as $r) {
-            $paid = $r->toRow()[array_search('paid', array_keys(Record::COLUMNS), true)];
+            $cells = array_combine(array_keys(Record::COLUMNS), $r->toRow());
+            $more = [...array_values(Arr::only($cells, ['cash', 'check_number', 'check_date', 'or_date', 'or_number', 'booklet_number', 'envelope_number'])), ...array_fill(0, 10, null), 'r'.$r->id];
             foreach ($r->sis as $l) {
                 if (ctype_digit((string) $l['number'])) {
-                    $lines[(int) $l['number']][] = [$l['number'], $l['date'], $r->company, $r->sold_to, $r->project, $l['amount'], $paid];
+                    $lines[(int) $l['number']][] = [[$l['number'], $l['date'], $r->company, $r->sold_to, $r->project, $l['amount'], $cells['paid']], $more];
                 }
             }
         }
         ksort($lines);
-        $rows = [['SI #', 'SI DATE', 'GROUP', 'COMPANY (SOLD TO)', 'PROJECT', 'SI AMOUNT', 'PAYMENT STATUS', 'NOTE']];
+        // NOTE stays in H, where the Missing / Duplicate colours look; hidden Z ties a row to its record.
+        $headers = ['SI #', 'SI DATE', 'GROUP', 'COMPANY (SOLD TO)', 'PROJECT', 'SI AMOUNT', 'PAYMENT STATUS', 'NOTE', 'PAID BY', 'CHECK #', 'CHECK / CASH DATE', 'OR DATE', 'OR #', 'BOOKLET #', 'ENVELOPE #'];
+        $rows = [[...$headers, ...array_fill(0, 10, null), 'RECORD']];
         if ($lines) {
             $last = array_key_last($lines);
             for ($n = max(array_key_first($lines), $last - self::MASTER_ROWS + 1); $n <= $last; $n++) {
-                foreach ($lines[$n] ?? [[(string) $n, '', '', '', '', '', '']] as $row) {
-                    $rows[] = [...$row, ! isset($lines[$n]) ? 'Missing' : (count($lines[$n]) > 1 ? 'Duplicate' : '')];
+                foreach ($lines[$n] ?? [[[(string) $n, '', '', '', '', '', ''], []]] as [$row, $more]) {
+                    $rows[] = [...$row, ! isset($lines[$n]) ? 'Missing' : (count($lines[$n]) > 1 ? 'Duplicate' : ''), ...$more];
                 }
             }
         }
 
-        $key = 'sheets-master:'.($this->sheet->spreadsheetId ?? '');
-        $styled = 'sheets-styled-master-v2:'.($this->sheet->spreadsheetId ?? '');
+        $key = $this->masterKey('hash');
+        $styled = 'sheets-styled-master-v3:'.($this->sheet->spreadsheetId ?? '');
         if (Cache::get($key) === ($hash = md5(json_encode($rows))) && Cache::has($styled)) {
+            Cache::forever($this->masterKey('at'), $shownAt);
+
             return;
         }
         $made = $this->sheet->fillTab(self::MASTER_TAB, $rows, [7, ['Missing' => '#f4c7c3', 'Duplicate' => '#fce8b2']]);
         // The same look as the group tabs: SI in amber, who in slate, payment in violet; Paid green, Unpaid red.
         if ($made || ! Cache::has($styled)) {
             $this->sheet->styleTabs([self::MASTER_TAB], [
-                'columns' => count($rows[0]),
+                'columns' => count($headers),
                 'colors' => [6 => Record::PAYMENT],
                 'lists' => [],
                 'money' => [5],
                 'centered' => [],
-                'dates' => [1],
-                'sections' => [[0, 1, '#b45309'], [2, 4, '#334155'], [5, 5, '#b45309'], [6, 7, '#6d28d9']],
+                'dates' => [1, 10, 11],
+                'sections' => [[0, 1, '#b45309'], [2, 4, '#334155'], [5, 5, '#b45309'], [6, 12, '#6d28d9'], [13, 14, '#475569']],
             ]);
             Cache::forever($styled, true);
         }
-        $this->sheet->fitColumns([self::MASTER_TAB], $rows[0]);
+        $this->sheet->fitColumns([self::MASTER_TAB], $headers);
         Cache::forever($key, $hash);
+        Cache::forever($this->masterKey('at'), $shownAt);
     }
 
     /** A record's row in its group's tab: every column but the group. */

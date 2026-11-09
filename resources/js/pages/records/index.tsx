@@ -18,6 +18,7 @@ import { useEffect, useState } from 'react';
 
 type Filters = {
     q?: string;
+    in?: string;
     company?: string;
     project?: string;
     delivery?: string;
@@ -30,6 +31,18 @@ type Filters = {
 
 const PAYMENT: Record<string, string> = { All: '', Unpaid: 'unpaid', 'For checking': 'checking', Paid: 'paid' };
 const ALL = '__all';
+
+/** What the search looks in (?in=); booklet and envelope match the whole number. */
+const SEARCH_IN = [
+    { value: ALL, label: 'Search all' },
+    { value: 'si', label: 'SI #' },
+    { value: 'booklet', label: 'Booklet #' },
+    { value: 'envelope', label: 'Envelope #' },
+    { value: 'or', label: 'OR #' },
+    { value: 'check', label: 'Check #' },
+    { value: 'po', label: 'PO #' },
+    { value: 'dr', label: 'DR #' },
+];
 
 const DELIVERY_VARIANT: Record<string, 'success' | 'warning' | 'secondary'> = { Delivered: 'success', Partial: 'warning' };
 
@@ -74,14 +87,26 @@ export default function Records({
             <div className="bg-card space-y-4 rounded-3xl p-4 shadow-sm sm:p-5">
                 <div className="flex flex-wrap items-center gap-3">
                     <form
-                        className="min-w-56 flex-1"
+                        className="flex min-w-72 flex-1 gap-2"
+                        autoComplete="off"
                         onSubmit={(e) => {
                             e.preventDefault();
                             go({ q });
                         }}
                     >
+                        <Select
+                            aria-label="Search in"
+                            className="w-36 shrink-0"
+                            options={SEARCH_IN}
+                            value={filters.in ?? ALL}
+                            onValueChange={(v) => go({ q, in: v === ALL ? '' : v })}
+                        />
                         <Input
-                            placeholder="Group, company, project, TIN, PO, DR, SI, OR or check no."
+                            placeholder={
+                                filters.in
+                                    ? `${SEARCH_IN.find((o) => o.value === filters.in)?.label ?? ''} to look for`
+                                    : 'Group, company, project, TIN or any number'
+                            }
                             aria-label="Search records"
                             startIcon={<Search className="size-4" />}
                             value={q}

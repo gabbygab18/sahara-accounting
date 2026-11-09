@@ -117,6 +117,11 @@ class RecordTest extends TestCase
         $this->get('/dashboard')->assertInertia(fn ($page) => $page->where('totals.unpaid', 0)->where('collect', []));
         $this->get('/records?payment=unpaid')->assertInertia(fn ($page) => $page->where('records.total', 0));
         $this->get('/records?q=E-3')->assertInertia(fn ($page) => $page->where('records.total', 1));
+        // Narrowed to one kind of number: booklet 1 is not booklet 12, and 12 is not looked for in SI numbers.
+        $this->get('/records?q=1&in=booklet')->assertInertia(fn ($page) => $page->where('records.total', 0));
+        $this->get('/records?q=12&in=booklet')->assertInertia(fn ($page) => $page->where('records.total', 1));
+        $this->get('/records?q=12&in=si')->assertInertia(fn ($page) => $page->where('records.total', 0));
+        $this->get('/records?q=1946&in=si')->assertInertia(fn ($page) => $page->where('records.total', 1));
         $this->post('/records', $this->invoice())->assertSessionHasErrors('sis.0.number');
         $this->get('/records/export?payment=unpaid&format=print')->assertOk()->assertDontSee('194651');
 
