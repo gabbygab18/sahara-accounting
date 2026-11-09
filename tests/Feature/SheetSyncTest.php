@@ -212,6 +212,47 @@ class SheetSyncTest extends TestCase
         $this->assertSame('302', $this->sheet->row('SI MASTER', 4)[13]);
     }
 
+    public function test_a_sorted_or_wiped_si_master_does_not_wipe_the_numbers_and_wiped_ones_can_be_put_back()
+    {
+        $records = collect(range(1, 7))->map(fn ($n) => Record::create([
+            'company' => 'Cityland', 'drs' => [], 'booklet_number' => (string) (300 + $n), 'sis' => [['date' => '2026-10-16', 'number' => (string) (10 + $n), 'amount' => 10]],
+        ]));
+        $later = function () {
+            $this->travel(1)->minutes();
+            $this->sync();
+        };
+        $this->sync();
+        $later();
+        $booklets = fn () => $records->map(fn ($r) => $r->fresh()->booklet_number)->all();
+        $kept = $booklets();
+
+        // Sorted on A-O only (hidden Z left as it was): rows no longer match their ids, so nothing is taken.
+        [$two, $three] = [$this->sheet->tabs['SI MASTER'][2], $this->sheet->tabs['SI MASTER'][3]];
+        $this->sheet->tabs['SI MASTER'][2] = [...array_slice($three, 0, 15), ...array_slice($two, 15)];
+        $this->sheet->tabs['SI MASTER'][3] = [...array_slice($two, 0, 15), ...array_slice($three, 15)];
+        $later();
+        $this->assertSame($kept, $booklets());
+
+        // The whole booklet column deleted: not taken, and the master shows the numbers again.
+        $this->sheet->write(array_combine(array_map(fn ($row) => "'SI MASTER'!N{$row}", range(2, 8)), array_fill(0, 7, [''])));
+        $later();
+        $this->assertSame($kept, $booklets());
+        $later();
+        $this->assertSame('301', $this->sheet->row('SI MASTER', 2)[13]);
+
+        // A few cleared is taken; the restore command puts them back from the activity log.
+        $from = now()->tz('Asia/Manila')->format('Y-m-d H:i');
+        $this->sheet->write(["'SI MASTER'!N2" => [''], "'SI MASTER'!N3" => ['']]);
+        $later();
+        $this->assertSame([null, null], array_slice($booklets(), 0, 2));
+        $this->artisan('records:restore-filing', ['--from' => $from])->assertSuccessful();
+        $this->assertSame([null, null], array_slice($booklets(), 0, 2)); // only shown until --apply
+        $this->artisan('records:restore-filing', ['--from' => $from, '--apply' => true])->assertSuccessful();
+        $this->assertSame($kept, $booklets());
+        $later();
+        $this->assertSame(['301', '302'], [$this->sheet->row('SI MASTER', 2)[13], $this->cell('Cityland', 3, 'booklet_number')]);
+    }
+
     public function test_an_app_edit_made_during_a_sync_is_not_lost()
     {
         // A sheet that lets the app change the record while the sync is writing to it.

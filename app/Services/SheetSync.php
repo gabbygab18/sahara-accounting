@@ -38,6 +38,9 @@ class SheetSync
     /** Columns of the SI master read back: booklet #, envelope #. */
     private const MASTER_FILING = [13 => 'booklet_number', 14 => 'envelope_number'];
 
+    /** ponytail: more records than this cleared in the master in one go is taken as a mistake; raise it if clearing many is real */
+    private const MASTER_MAX_CLEARED = 5;
+
     /** ponytail: the master lists at most this many numbers (the highest); raise it if a booklet run gets longer */
     private const MASTER_ROWS = 5000;
 
@@ -198,7 +201,7 @@ class SheetSync
         $log->pushed = count($sent);
 
         // Header colours, banding, filter, paid green / unpaid red, dropdowns, ₱ amounts, dates and alignment: once per tab (repeating is harmless, so a cleared cache only redoes it).
-        $key = fn ($tab) => 'sheets-styled-v8:'.($this->sheet->spreadsheetId ?? '').':'.$tab;
+        $key = fn ($tab) => 'sheets-styled-v9:'.($this->sheet->spreadsheetId ?? '').':'.$tab;
         if ($unstyled = array_values(array_filter(array_map('strval', array_keys($next)), fn ($tab) => ! Cache::has($key($tab))))) {
             $col = fn ($column) => array_search($column, array_keys(Record::COLUMNS), true) - 1;
             $this->sheet->styleTabs($unstyled, [
@@ -241,24 +244,48 @@ class SheetSync
      * Booklet / envelope # typed in the SI master: its record follows, and so its row in the group tab. A cell counts as
      * typed only if the record has not changed since the master last showed it (else the master is behind and gets
      * rewritten). A record with several SIs takes the first of its rows that differs.
+     *
+     * Guards, as a wrong read here would wipe the numbers everywhere: a row whose SI # is not its record's (sorted
+     * without hidden column Z) is skipped, and numbers cleared on more than MASTER_MAX_CLEARED records at once (a
+     * column deleted by mistake) are not taken: the master is written again with them instead.
      */
     private function readMaster(array $rows, Collection $records, SyncLog $log): void
     {
         $shownAt = Cache::get($this->masterKey('at'));
+        $typed = []; // record id => [field => value]
         foreach ($shownAt ? array_slice($rows, 1) : [] as $cells) {
             $record = preg_match('/^r(\d+)$/', trim((string) ($cells[25] ?? '')), $m) ? $records->get((int) $m[1]) : null;
-            if (! $record || $record->trashed() || $record->pending_sync || $record->updated_at->getTimestamp() >= $shownAt) {
+            if (! $record || isset($typed[$record->id]) || $record->trashed() || $record->pending_sync || $record->updated_at->getTimestamp() >= $shownAt) {
                 continue;
             }
+            if (! in_array(trim((string) ($cells[0] ?? '')), array_map(fn ($l) => (string) $l['number'], $record->sis), true)) {
+                Cache::forget($this->masterKey('hash')); // out of order: written again in order
+
+                continue;
+            }
+            $values = [];
             foreach (self::MASTER_FILING as $i => $field) {
-                $record->{$field} = ($value = trim((string) ($cells[$i] ?? ''))) === '' ? null : mb_substr($value, 0, 50);
+                $value = ($value = trim((string) ($cells[$i] ?? ''))) === '' ? null : mb_substr($value, 0, 50);
+                if ($value !== $record->{$field}) {
+                    $values[$field] = $value;
+                }
             }
-            if ($record->isDirty()) {
-                Activity::log(null, 'edited', $record);
-                $record->pending_sync = true; // so its group tab row is written below
-                $record->save();
-                $log->updated++;
+            if ($values) {
+                $typed[$record->id] = $values;
             }
+        }
+
+        $cleared = array_filter($typed, fn ($values) => in_array(null, $values, true));
+        if (count($cleared) > self::MASTER_MAX_CLEARED) {
+            $typed = array_filter(array_map(fn ($values) => array_filter($values, fn ($v) => $v !== null), $typed));
+            Cache::forget($this->masterKey('hash'));
+        }
+        foreach ($typed as $id => $values) {
+            $record = $records->get($id)->fill($values);
+            Activity::log(null, 'edited', $record);
+            $record->pending_sync = true; // so its group tab row is written below
+            $record->save();
+            $log->updated++;
         }
     }
 
@@ -298,7 +325,7 @@ class SheetSync
         }
 
         $key = $this->masterKey('hash');
-        $styled = 'sheets-styled-master-v3:'.($this->sheet->spreadsheetId ?? '');
+        $styled = 'sheets-styled-master-v4:'.($this->sheet->spreadsheetId ?? '');
         if (Cache::get($key) === ($hash = md5(json_encode($rows))) && Cache::has($styled)) {
             Cache::forever($this->masterKey('at'), $shownAt);
 

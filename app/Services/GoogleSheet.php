@@ -318,7 +318,8 @@ class GoogleSheet
                 'range' => ['sheetId' => $id, 'startRowIndex' => 1, 'startColumnIndex' => 0, 'endColumnIndex' => $style['columns']],
                 'rowProperties' => ['firstBandColor' => $rgb('#ffffff'), 'secondBandColor' => $rgb('#f3f4f6')],
             ]]];
-            $requests[] = ['setBasicFilter' => ['filter' => ['range' => ['sheetId' => $id, 'startRowIndex' => 0, 'startColumnIndex' => 0, 'endColumnIndex' => $style['columns']]]]];
+            // Through hidden column Z, so sorting with it moves each row's id along with the row.
+            $requests[] = ['setBasicFilter' => ['filter' => ['range' => ['sheetId' => $id, 'startRowIndex' => 0, 'startColumnIndex' => 0, 'endColumnIndex' => 26]]]];
 
             foreach ($style['lists'] as $col => $values) {
                 $requests[] = ['setDataValidation' => ['range' => $column($col), 'rule' => [
