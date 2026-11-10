@@ -88,7 +88,7 @@ export default function Records({
             <div className="bg-card space-y-4 rounded-3xl p-4 shadow-sm sm:p-5">
                 <div className="flex flex-wrap items-center gap-3">
                     <form
-                        className="flex w-full min-w-0 flex-1 gap-2 sm:w-auto sm:min-w-72"
+                        className="flex min-w-0 flex-1 basis-full gap-2 sm:min-w-96 sm:basis-0"
                         autoComplete="off"
                         onSubmit={(e) => {
                             e.preventDefault();
@@ -134,12 +134,14 @@ export default function Records({
                 <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-6">
                     <Select
                         aria-label="Group"
+                        className="max-w-none"
                         options={[{ value: ALL, label: 'All groups' }, ...options.companies.map((c) => ({ value: c.name, label: c.name }))]}
                         value={filters.company ?? ALL}
                         onValueChange={(v) => go({ company: v === ALL ? '' : v, project: '' })}
                     />
                     <Select
                         aria-label="Project"
+                        className="max-w-none"
                         disabled={!projects.length}
                         options={[
                             { value: ALL, label: filters.company ? 'All projects' : 'Pick a group first' },
@@ -150,6 +152,7 @@ export default function Records({
                     />
                     <Select
                         aria-label="Delivery status"
+                        className="max-w-none"
                         options={[{ value: ALL, label: 'Any delivery status' }, ...options.delivery.map((d) => ({ value: d, label: d }))]}
                         value={filters.delivery ?? ALL}
                         onValueChange={(v) => go({ delivery: v === ALL ? '' : v })}
@@ -158,6 +161,7 @@ export default function Records({
                     <DatePicker value={filters.to ?? ''} onChange={(to) => go({ to })} placeholder="To date" clearable />
                     <Select
                         aria-label="Sort"
+                        className="max-w-none"
                         options={[
                             { value: ALL, label: 'SI # order' },
                             { value: 'latest', label: 'Last added first' },
