@@ -26,6 +26,8 @@ export interface AccountingRecord {
     /** From the lines: first DR date, DR numbers joined, overall delivery status. */
     /** 30 = 30 days, 0 = COD. */
     terms_days: number | null;
+    /** When the invoice was countered: the terms count from it (from the SI date until then). */
+    counter_date: string | null;
     dr_date: string | null;
     dr_number: string | null;
     delivery_status: string;
@@ -52,7 +54,7 @@ export interface AccountingRecord {
     /** When the check can be deposited. */
     check_date: string | null;
     check_cleared: boolean;
-    /** SI date plus terms (list page only). */
+    /** Counter date (or SI date) plus terms (list page only). */
     due?: string | null;
     overdue?: boolean;
 }

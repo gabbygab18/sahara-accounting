@@ -58,7 +58,7 @@ class SheetSyncTest extends TestCase
         $this->assertSame(['Cityland'], $this->groupTabs($this->sheet->styled)); // paid green, unpaid red, once
 
         // Typed in the group's tab: becomes a record of that group and gets its SYNC ID.
-        $this->sheet->write([$this->at('Cityland', 3, 'sold_to') => ['Uptown', '', '', '', '', '', '', 'pending', '2026-10-20', '77', '2,500', '15', '', 'Unpaid']]);
+        $this->sheet->write([$this->at('Cityland', 3, 'sold_to') => ['Uptown', '', '', '', '', '', '', 'pending', '2026-10-20', '77', '2,500', '', '15', '', 'Unpaid']]);
         $this->assertSame(1, $this->sync()->added);
         $new = Record::where('si_number', '77')->sole();
         $this->assertSame(['Cityland', 'Uptown', 2500.0, 15, 'Not delivered'], [$new->company, $new->sold_to, $new->amount, $new->terms_days, $new->delivery_status]);
@@ -251,6 +251,50 @@ class SheetSyncTest extends TestCase
         $this->assertSame($kept, $booklets());
         $later();
         $this->assertSame(['301', '302'], [$this->sheet->row('SI MASTER', 2)[13], $this->cell('Cityland', 3, 'booklet_number')]);
+    }
+
+    public function test_group_tabs_go_lowest_si_first_where_the_app_writes_and_a_sorted_master_stays_sorted()
+    {
+        $si = fn (string ...$n) => array_map(fn ($n) => ['date' => '2026-10-16', 'number' => $n, 'amount' => 10], $n);
+        $c = Record::create(['company' => 'Cityland', 'drs' => [], 'booklet_number' => '1', 'sis' => $si('22')]);
+        Record::create(['company' => 'Cityland', 'drs' => [], 'sis' => []]); // not invoiced yet: last
+        $b = Record::create(['company' => 'Cityland', 'drs' => [], 'booklet_number' => '3', 'sis' => $si('21', '20')]);
+        $this->sync();
+        $order = fn () => array_map(fn ($row) => $this->sheet->row('Cityland', $row)[24], [2, 3, 4]);
+        $this->assertSame([20, 22, null], $order());
+        $this->assertSame([SheetSync::ORDER_HEADER, 'SYNC ID'], array_slice($this->sheet->row('Cityland', 1), 24, 2));
+
+        // Sorted by hand in the sheet and typed in: left as it is. Changed in the app: lowest SI first again.
+        $this->sheet->tabs['Cityland'] = [1 => $this->sheet->tabs['Cityland'][1], 2 => $this->sheet->tabs['Cityland'][4], 3 => $this->sheet->tabs['Cityland'][3], 4 => $this->sheet->tabs['Cityland'][2]];
+        $this->sheet->write([$this->at('Cityland', 3, 'booklet_number') => ['2']]);
+        $this->sync();
+        $this->assertSame([null, 22, 20], $order());
+        $this->assertSame('2', $c->fresh()->booklet_number);
+        $b->fresh()->fill(['envelope_number' => 'E-1', 'pending_sync' => true])->save();
+        $this->sync();
+        $this->assertSame([20, 22, null], $order());
+
+        // The SI master sorted by booklet in the sheet (whole rows, Z too): it stays so while booklets are typed in.
+        $this->travel(1)->minutes();
+        $this->sync();
+        $master = $this->sheet->tabs['SI MASTER'];
+        $byBooklet = [1 => $master[1], 2 => $master[4], 3 => $master[2], 4 => $master[3]]; // booklet 2 (SI 22), then 3 (SIs 20, 21)
+        $this->sheet->tabs['SI MASTER'] = $byBooklet;
+        $this->sheet->write(["'SI MASTER'!N2" => ['4']]);
+        $this->sync();
+        $this->assertSame('4', $c->fresh()->booklet_number);
+        $sis = fn () => array_map(fn ($row) => (string) $row[0], array_slice($this->sheet->tabs['SI MASTER'], 1));
+        $this->assertSame(['22', '20', '21'], $sis());
+        Record::create(['company' => 'Cityland', 'drs' => [], 'sis' => $si('23')]);
+        $this->sync();
+        $this->assertSame(['22', '20', '21', '23'], $sis()); // new at the bottom
+
+        // Sorted back by SI: written in SI order again, with the missing numbers.
+        $tab = $this->sheet->tabs['SI MASTER'];
+        $this->sheet->tabs['SI MASTER'] = [1 => $tab[1], 2 => $tab[3], 3 => $tab[4], 4 => $tab[2], 5 => $tab[5]];
+        Record::create(['company' => 'Cityland', 'drs' => [], 'sis' => $si('25')]);
+        $this->sync();
+        $this->assertSame(['20', '21', '22', '23', '24', '25'], $sis()); // 24: Missing
     }
 
     public function test_an_app_edit_made_during_a_sync_is_not_lost()

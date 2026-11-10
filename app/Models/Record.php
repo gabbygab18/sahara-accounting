@@ -38,6 +38,7 @@ class Record extends Model
         'si_date' => 'SI DATE',
         'si_number' => 'SI #',
         'si_amount' => 'SI AMOUNT',
+        'counter_date' => 'COUNTER DATE',
         'terms_days' => 'TERMS (DAYS)',
         'amount' => 'TOTAL AMOUNT',
         'paid' => 'PAYMENT STATUS',
@@ -68,10 +69,10 @@ class Record extends Model
     /** Payment status as written in the sheet, with its colour there. */
     public const PAYMENT = ['Unpaid' => '#f4c7c3', 'For checking' => '#fce8b2', 'Paid' => '#b7e1cd', 'Cancelled' => '#e0e0e0'];
 
-    public const DATES = ['po_date', 'dr_date', 'si_date', 'check_date', 'or_date'];
+    public const DATES = ['po_date', 'dr_date', 'si_date', 'counter_date', 'check_date', 'or_date'];
 
     /** Stored fields (the activity log compares these). The DR / SI ones are filled from the lines. */
-    public const FIELDS = ['company', 'sold_to', 'project', 'tin', 'po_date', 'po_number', 'dr_date', 'dr_number', 'delivery_status', 'si_date', 'si_number', 'terms_days', 'amount', 'paid', 'cash', 'check_number', 'check_date', 'check_cleared', 'or_date', 'or_number', 'booklet_number', 'envelope_number', 'si_cancelled'];
+    public const FIELDS = ['company', 'sold_to', 'project', 'tin', 'po_date', 'po_number', 'dr_date', 'dr_number', 'delivery_status', 'si_date', 'si_number', 'counter_date', 'terms_days', 'amount', 'paid', 'cash', 'check_number', 'check_date', 'check_cleared', 'or_date', 'or_number', 'booklet_number', 'envelope_number', 'si_cancelled'];
 
     protected $fillable = [...self::FIELDS, 'si_missing', 'wrong_computation', 'drs', 'sis', 'paid_confirmed', 'user_id', 'synced_at', 'pending_sync'];
 
@@ -83,6 +84,7 @@ class Record extends Model
             'po_date' => 'date:Y-m-d',
             'dr_date' => 'date:Y-m-d',
             'si_date' => 'date:Y-m-d',
+            'counter_date' => 'date:Y-m-d',
             'or_date' => 'date:Y-m-d',
             'check_date' => 'date:Y-m-d',
             'amount' => 'float',
@@ -157,10 +159,12 @@ class Record extends Model
         return $this->belongsTo(User::class);
     }
 
-    /** First SI date plus the terms; null without both. */
+    /** The terms counted from the counter date (from the first SI date until it is countered); null without a date or terms. */
     public function dueOn(): ?Carbon
     {
-        return $this->si_date && $this->terms_days !== null ? $this->si_date->copy()->addDays($this->terms_days) : null;
+        $from = $this->counter_date ?? $this->si_date;
+
+        return $from && $this->terms_days !== null ? $from->copy()->addDays($this->terms_days) : null;
     }
 
     /** unpaid, checking (marked paid, waiting for the admin to confirm) or paid. */

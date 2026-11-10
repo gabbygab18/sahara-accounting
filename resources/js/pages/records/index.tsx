@@ -87,7 +87,7 @@ export default function Records({
             <div className="bg-card space-y-4 rounded-3xl p-4 shadow-sm sm:p-5">
                 <div className="flex flex-wrap items-center gap-3">
                     <form
-                        className="flex min-w-72 flex-1 gap-2"
+                        className="flex w-full min-w-0 flex-1 gap-2 sm:w-auto sm:min-w-72"
                         autoComplete="off"
                         onSubmit={(e) => {
                             e.preventDefault();
@@ -96,7 +96,7 @@ export default function Records({
                     >
                         <Select
                             aria-label="Search in"
-                            className="w-36 shrink-0"
+                            className="w-32 shrink-0 sm:w-36"
                             options={SEARCH_IN}
                             value={filters.in ?? ALL}
                             onValueChange={(v) => go({ q, in: v === ALL ? '' : v })}
@@ -108,6 +108,7 @@ export default function Records({
                                     : 'Group, company, project, TIN or any number'
                             }
                             aria-label="Search records"
+                            className="min-w-0 grid-cols-1"
                             startIcon={<Search className="size-4" />}
                             value={q}
                             onChange={(e) => setQ(e.target.value)}
@@ -121,8 +122,9 @@ export default function Records({
                             onChange={(v) => go({ payment: PAYMENT[v] })}
                         />
                     </div>
+                    {/* On bigger screens the header has it. */}
                     {canAdd && (
-                        <Button startIcon={<PlusCircle className="size-4" />} onClick={() => setAdding(true)}>
+                        <Button className="sm:hidden" startIcon={<PlusCircle className="size-4" />} onClick={() => setAdding(true)}>
                             Add record
                         </Button>
                     )}
@@ -354,6 +356,9 @@ export default function Records({
                                     <span className={cn('text-xs', r.overdue ? 'text-destructive font-medium' : 'text-muted-foreground')}>
                                         {r.due ? `due ${prettyDate(r.due)}` : ''}
                                     </span>
+                                    {r.counter_date && (
+                                        <span className="text-muted-foreground block text-xs">countered {prettyDate(r.counter_date)}</span>
+                                    )}
                                 </span>
                             ),
                         },

@@ -3,6 +3,7 @@
 namespace Tests\Feature;
 
 use App\Services\GoogleSheet;
+use App\Services\SheetSync;
 use Illuminate\Support\Carbon;
 
 /** In-memory stand-in for the Google Sheet: tab => row number => cells (A = index 0, Z = 25). */
@@ -74,7 +75,7 @@ class FakeSheet extends GoogleSheet
     {
         $tab = collect($this->tabs())->first(fn ($t) => mb_strtolower($t) === mb_strtolower($tab)) ?? $tab;
         $this->tabs[$tab] ??= [];
-        $this->write([self::range($tab, 'A1') => $headers, self::range($tab, 'Z1') => ['SYNC ID']]);
+        $this->write([self::range($tab, 'A1') => $headers, self::range($tab, 'Y1') => [SheetSync::ORDER_HEADER, 'SYNC ID']]);
 
         return $tab;
     }
@@ -84,6 +85,19 @@ class FakeSheet extends GoogleSheet
     public function styleTabs(array $tabs, array $style): void
     {
         $this->styled = [...$this->styled, ...$tabs];
+    }
+
+    public array $sorted = [];
+
+    /** Like Sheets: rows below the header in order of the column, blanks last; ties keep their order. */
+    public function sortTabs(array $tabs, int $column): void
+    {
+        foreach ($tabs as $tab) {
+            $rows = array_filter($this->tabs[$tab], fn ($row) => $row > 1, ARRAY_FILTER_USE_KEY);
+            uasort($rows, fn ($a, $b) => [($a[$column] ?? '') === '', $a[$column] ?? 0] <=> [($b[$column] ?? '') === '', $b[$column] ?? 0]);
+            $this->tabs[$tab] = [1 => $this->tabs[$tab][1] ?? [], ...array_combine(range(2, count($rows) + 1), array_values($rows))];
+            $this->sorted[] = $tab;
+        }
     }
 
     public array $fitted = [];

@@ -263,7 +263,8 @@ export default function AppSidebarLayout({ children, breadcrumbs = [] }: { child
                         <h1 className="max-w-48 shrink-0 truncate text-lg font-black sm:text-xl xl:max-w-64">{title}</h1>
 
                         {/* The most used thing on every page: a long box in the middle of the header. */}
-                        {auth.can.includes('records') && (
+                        {/* Records has its own search, with "Search in". */}
+                        {auth.can.includes('records') && path !== '/records' ? (
                             <form
                                 className="mx-2 hidden min-w-0 flex-1 md:block lg:mx-4"
                                 autoComplete="off"
@@ -280,6 +281,8 @@ export default function AppSidebarLayout({ children, breadcrumbs = [] }: { child
                                     onChange={(e) => setQ(e.target.value)}
                                 />
                             </form>
+                        ) : (
+                            <div className="hidden flex-1 md:block" />
                         )}
 
                         {auth.can.includes('settings') && <SheetsPill />}

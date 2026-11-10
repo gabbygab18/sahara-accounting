@@ -23,6 +23,7 @@ class RecordWorkbook
         'po_date' => ['PODATE', 'PURCHASEORDERDATE'],
         'po_number' => ['PO', 'PONO', 'PONUMBER', 'PURCHASEORDER'],
         'terms_days' => ['TERMS', 'TERMSDAYS', 'TERM'],
+        'counter_date' => ['COUNTERDATE', 'COUNTER', 'COUNTERED', 'DATECOUNTERED'],
         'dr_date' => ['DRDATE', 'DELIVERYDATE'],
         'dr_number' => ['DR', 'DRNO', 'DRNUMBER', 'DELIVERYRECEIPT'],
         'delivery_status' => ['DELIVERYSTATUS', 'DELIVERY', 'DELIVERED'],

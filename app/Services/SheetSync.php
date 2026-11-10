@@ -15,7 +15,8 @@ use Throwable;
 /**
  * Two-way sync between the app and the master Google Sheet: one tab per group (Record::company), each row a
  * record with the other Record::COLUMNS from column A, and its SYNC ID "r123" in hidden column Z. A tab counts
- * once its Z1 says SYNC ID (the app writes that when it makes the tab), so other tabs are left alone.
+ * once its Z1 says SYNC ID (the app writes that when it makes the tab), so other tabs are left alone. Hidden column
+ * Y holds the record's lowest SI number: a tab the app wrote to is sorted on it, lowest SI first.
  *
  * Rows with a known SYNC ID update their record (the tab is its group, so moving a row to another tab moves
  * the record), unless the record was changed in the app since the last sync: then the app's values are
@@ -43,6 +44,12 @@ class SheetSync
 
     /** ponytail: the master lists at most this many numbers (the highest); raise it if a booklet run gets longer */
     private const MASTER_ROWS = 5000;
+
+    /** Hidden column Y's header: the lowest SI number, that the group tabs are sorted on. */
+    public const ORDER_HEADER = 'SI ORDER';
+
+    /** Set when SI master rows no longer match their ids (sorted without hidden Z): its order is not kept. */
+    private bool $misplaced = false;
 
     public function __construct(private readonly GoogleSheet $sheet) {}
 
@@ -89,10 +96,11 @@ class SheetSync
         foreach ($titles as $title) {
             $rows = $read[GoogleSheet::range($title, 'A1:Z')];
             if (trim((string) ($rows[1][25] ?? '')) === 'SYNC ID') {
-                if (array_map(fn ($c) => trim((string) $c), array_pad(array_slice($rows[1], 0, count($headers)), count($headers), '')) !== $headers) {
+                if (array_map(fn ($c) => trim((string) $c), array_pad(array_slice($rows[1], 0, count($headers)), count($headers), '')) !== $headers
+                    || trim((string) ($rows[1][24] ?? '')) !== self::ORDER_HEADER) {
                     // Its rows may sit under the wrong headers: fix the headers and write every row from the app.
                     $stale[$title] = true;
-                    $writes[GoogleSheet::range($title, 'A1')] = $headers;
+                    $writes[GoogleSheet::range($title, 'A1')] = [...array_pad($headers, 24, null), self::ORDER_HEADER];
                 }
                 unset($rows[1]);
                 $tabs[$title] = $rows;
@@ -124,7 +132,8 @@ class SheetSync
         // ponytail: appends go below the last row read; a row typed in the same second can be overwritten
         $next = array_map(fn ($rows) => max([1, ...array_keys($rows)]) + 1, $tabs);
 
-        DB::transaction(function () use ($read, $tabs, $stale, $records, $headers, $tabOf, $log, &$lower, &$writes, &$sent, &$gone, &$seen, &$append, &$next) {
+        $touched = []; // tabs written to: sorted by SI afterwards
+        DB::transaction(function () use ($read, $tabs, $stale, $records, $headers, $tabOf, $log, &$lower, &$writes, &$sent, &$gone, &$seen, &$append, &$next, &$touched) {
             $this->readMaster($read[GoogleSheet::range(self::MASTER_TAB, 'A1:Z')] ?? [], $records, $log);
 
             foreach ($tabs as $tab => $rows) {
@@ -144,6 +153,7 @@ class SheetSync
                         } elseif ($record->pending_sync || isset($stale[$tab])) {
                             $writes[GoogleSheet::range($tab, "A{$row}")] = $this->cells($record);
                             $sent[$id] = $record->updated_at;
+                            $touched[$tab] = true;
                         } else {
                             $record->fill(Record::fromRow([$tab, ...array_slice($cells, 0, count($headers))]));
                             if ($record->isDirty()) {
@@ -155,7 +165,8 @@ class SheetSync
                     } elseif (! Record::blankRow(['', ...$cells])) {
                         $record = Record::create(Record::fromRow([$tab, ...array_slice($cells, 0, count($headers))]) + ['synced_at' => now(), 'pending_sync' => false]);
                         Activity::log(null, 'added', $record);
-                        $writes[GoogleSheet::range($tab, "Z{$row}")] = ['r'.$record->id];
+                        $writes[GoogleSheet::range($tab, "Y{$row}")] = [$this->order($record), 'r'.$record->id];
+                        $touched[$tab] = true;
                         $seen[$record->id] = true;
                         $log->added++;
                     }
@@ -186,8 +197,9 @@ class SheetSync
                     $next[$tab] ??= 2;
                 }
                 $row = $next[$tab]++;
-                $writes[GoogleSheet::range($tab, "A{$row}")] = [...array_pad($this->cells($record), 25, null), 'r'.$record->id];
+                $writes[GoogleSheet::range($tab, "A{$row}")] = [...$this->cells($record), 'r'.$record->id];
                 $sent[$record->id] = $record->updated_at;
+                $touched[$tab] = true;
             }
 
             // Inside the transaction: if the sheet refuses the write, the records made above are rolled back too.
@@ -201,7 +213,7 @@ class SheetSync
         $log->pushed = count($sent);
 
         // Header colours, banding, filter, paid green / unpaid red, dropdowns, ₱ amounts, dates and alignment: once per tab (repeating is harmless, so a cleared cache only redoes it).
-        $key = fn ($tab) => 'sheets-styled-v9:'.($this->sheet->spreadsheetId ?? '').':'.$tab;
+        $key = fn ($tab) => 'sheets-styled-v10:'.($this->sheet->spreadsheetId ?? '').':'.$tab;
         if ($unstyled = array_values(array_filter(array_map('strval', array_keys($next)), fn ($tab) => ! Cache::has($key($tab))))) {
             $col = fn ($column) => array_search($column, array_keys(Record::COLUMNS), true) - 1;
             $this->sheet->styleTabs($unstyled, [
@@ -237,7 +249,12 @@ class SheetSync
             $log->pushed += $trashed->count();
         }
 
-        $this->writeMaster();
+        // Lowest SI first, but only where the app wrote: a tab someone sorted another way stays so until it changes.
+        if ($touched) {
+            $this->sheet->sortTabs(array_map('strval', array_keys($touched)), 24);
+        }
+
+        $this->writeMaster($read[GoogleSheet::range(self::MASTER_TAB, 'A1:Z')] ?? []);
     }
 
     /**
@@ -252,6 +269,7 @@ class SheetSync
     private function readMaster(array $rows, Collection $records, SyncLog $log): void
     {
         $shownAt = Cache::get($this->masterKey('at'));
+        $this->misplaced = false;
         $typed = []; // record id => [field => value]
         foreach ($shownAt ? array_slice($rows, 1) : [] as $cells) {
             $record = preg_match('/^r(\d+)$/', trim((string) ($cells[25] ?? '')), $m) ? $records->get((int) $m[1]) : null;
@@ -259,7 +277,8 @@ class SheetSync
                 continue;
             }
             if (! in_array(trim((string) ($cells[0] ?? '')), array_map(fn ($l) => (string) $l['number'], $record->sis), true)) {
-                Cache::forget($this->masterKey('hash')); // out of order: written again in order
+                Cache::forget($this->masterKey('hash')); // its ids are out of place: written again, in SI order
+                $this->misplaced = true;
 
                 continue;
             }
@@ -298,7 +317,7 @@ class SheetSync
      * The "mother file": one row per SI number from the lowest to the highest, so a lost or hidden receipt shows as a
      * blank "Missing" row, and one entered twice as "Duplicate". Rewritten only when its rows change.
      */
-    private function writeMaster(): void
+    private function writeMaster(array $shown): void
     {
         $shownAt = now()->getTimestamp(); // the master shows the records as they are from here on
         $lines = []; // SI number => [[cells A-G, cells I-Z], ...]
@@ -322,6 +341,17 @@ class SheetSync
                     $rows[] = [...$row, ! isset($lines[$n]) ? 'Missing' : (count($lines[$n]) > 1 ? 'Duplicate' : ''), ...$more];
                 }
             }
+        }
+
+        // Sorted another way in the sheet (by booklet, say): kept in that order, new rows at the bottom. In SI order: rewritten so.
+        $shown = array_values(array_slice($shown, 1));
+        $numbers = array_map(fn ($cells) => (int) ($cells[0] ?? 0), $shown);
+        if (! $this->misplaced && array_filter(array_keys($numbers), fn ($i) => $i > 0 && $numbers[$i] < $numbers[$i - 1])) {
+            $keyOf = fn ($cells) => trim((string) ($cells[25] ?? '')).'|'.trim((string) ($cells[0] ?? ''));
+            $at = array_flip(array_map($keyOf, $shown));
+            $data = array_slice($rows, 1);
+            usort($data, fn ($a, $b) => ($at[$keyOf($a)] ?? PHP_INT_MAX) <=> ($at[$keyOf($b)] ?? PHP_INT_MAX)); // stable: new rows keep SI order
+            $rows = [$rows[0], ...$data];
         }
 
         $key = $this->masterKey('hash');
@@ -350,9 +380,17 @@ class SheetSync
         Cache::forever($this->masterKey('at'), $shownAt);
     }
 
-    /** A record's row in its group's tab: every column but the group. */
+    /** A record's row in its group's tab: every column but the group, then (in Y) its lowest SI number. */
     private function cells(Record $record): array
     {
-        return array_slice($record->toRow(), 1);
+        return [...array_pad(array_slice($record->toRow(), 1), 24, null), $this->order($record)];
+    }
+
+    /** The lowest SI number of a record, to sort its group's tab on; null (last) without one. */
+    private function order(Record $record): ?int
+    {
+        $numbers = array_filter(array_column($record->sis, 'number'), fn ($n) => ctype_digit((string) $n));
+
+        return $numbers ? (int) min($numbers) : null;
     }
 }

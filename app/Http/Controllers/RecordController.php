@@ -198,11 +198,11 @@ class RecordController extends Controller
             ->when($request->from, fn ($q, $d) => $q->whereRaw('COALESCE(si_date, dr_date) >= ?', [$d]))
             ->when($request->to, fn ($q, $d) => $q->whereRaw('COALESCE(si_date, dr_date) <= ?', [$d]))
             ->when($request->show === 'not-invoiced', fn ($q) => $q->whereNotNull('dr_number')->whereNull('si_number'))
-            ->when($request->show === 'missing', fn ($q) => $q->whereIn('id', Record::get(['id', 'paid', 'si_date', 'terms_days', 'si_missing', 'si_cancelled', 'wrong_computation'])
+            ->when($request->show === 'missing', fn ($q) => $q->whereIn('id', Record::get(['id', 'paid', 'si_date', 'counter_date', 'terms_days', 'si_missing', 'si_cancelled', 'wrong_computation'])
                 ->filter->missing()->modelKeys()))
             // ponytail: due dates are worked out in PHP (date maths differs per SQL dialect); fine into the tens of thousands
             ->when(isset(Record::AGING[$request->show]), fn ($q) => $q->whereIn('id', Record::where('paid', false)
-                ->get(['id', 'paid', 'si_date', 'terms_days'])->filter(fn ($r) => $r->age() === $request->show)->modelKeys()));
+                ->get(['id', 'paid', 'si_date', 'counter_date', 'terms_days'])->filter(fn ($r) => $r->age() === $request->show)->modelKeys()));
     }
 
     /** For the filters and the form: groups (with their latest TIN and terms), sold-to companies and projects per group, delivery statuses. */
@@ -248,6 +248,7 @@ class RecordController extends Controller
             'po_date' => ['nullable', 'date'],
             'po_number' => ['nullable', 'string', 'max:255'],
             'terms_days' => ['nullable', 'integer', 'min:0', 'max:365'],
+            'counter_date' => ['nullable', 'date'],
             'drs' => ['array', 'max:50'],
             'drs.*.date' => ['nullable', 'date'],
             'drs.*.number' => ['nullable', 'string', 'max:100'],

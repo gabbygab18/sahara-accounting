@@ -237,11 +237,11 @@ class GoogleSheet
         if (($missing = 26 - ($props['gridProperties']['columnCount'] ?? 26)) > 0) {
             $requests[] = ['appendDimension' => ['sheetId' => $id, 'dimension' => 'COLUMNS', 'length' => $missing]];
         }
-        $requests[] = ['updateDimensionProperties' => ['range' => ['sheetId' => $id, 'dimension' => 'COLUMNS', 'startIndex' => 25, 'endIndex' => 26], 'properties' => ['hiddenByUser' => true], 'fields' => 'hiddenByUser']];
+        $requests[] = ['updateDimensionProperties' => ['range' => ['sheetId' => $id, 'dimension' => 'COLUMNS', 'startIndex' => 24, 'endIndex' => 26], 'properties' => ['hiddenByUser' => true], 'fields' => 'hiddenByUser']];
         $requests[] = ['updateSheetProperties' => ['properties' => ['sheetId' => $id, 'gridProperties' => ['frozenRowCount' => 1]], 'fields' => 'gridProperties.frozenRowCount']];
         $requests[] = ['repeatCell' => ['range' => ['sheetId' => $id, 'startRowIndex' => 0, 'endRowIndex' => 1], 'cell' => ['userEnteredFormat' => ['textFormat' => ['bold' => true]]], 'fields' => 'userEnteredFormat.textFormat.bold']];
         $this->http()->post(self::API.$this->spreadsheetId.':batchUpdate', ['requests' => $requests])->throw();
-        $this->write([self::range($props['title'], 'A1') => $headers, self::range($props['title'], 'Z1') => ['SYNC ID']]);
+        $this->write([self::range($props['title'], 'A1') => $headers, self::range($props['title'], 'Y1') => [SheetSync::ORDER_HEADER, 'SYNC ID']]);
 
         return $props['title'];
     }
@@ -318,6 +318,8 @@ class GoogleSheet
                 'range' => ['sheetId' => $id, 'startRowIndex' => 1, 'startColumnIndex' => 0, 'endColumnIndex' => $style['columns']],
                 'rowProperties' => ['firstBandColor' => $rgb('#ffffff'), 'secondBandColor' => $rgb('#f3f4f6')],
             ]]];
+            // The app's own columns past the headers (SI order, SYNC ID) stay hidden.
+            $requests[] = ['updateDimensionProperties' => ['range' => ['sheetId' => $id, 'dimension' => 'COLUMNS', 'startIndex' => 24, 'endIndex' => 26], 'properties' => ['hiddenByUser' => true], 'fields' => 'hiddenByUser']];
             // Through hidden column Z, so sorting with it moves each row's id along with the row.
             $requests[] = ['setBasicFilter' => ['filter' => ['range' => ['sheetId' => $id, 'startRowIndex' => 0, 'startColumnIndex' => 0, 'endColumnIndex' => 26]]]];
 
@@ -376,6 +378,21 @@ class GoogleSheet
         ])->throw();
 
         return $made;
+    }
+
+    /** Sorts each tab's rows (below the header, every column) on one column, smallest first; blanks go last. */
+    public function sortTabs(array $tabs, int $column): void
+    {
+        $url = self::API.$this->spreadsheetId;
+        $ids = collect($this->http()->get($url, ['fields' => 'sheets.properties(sheetId,title)'])->throw()->json('sheets'))
+            ->mapWithKeys(fn ($s) => [$s['properties']['title'] => $s['properties']['sheetId']])
+            ->only($tabs);
+        if ($ids->isNotEmpty()) {
+            $this->http()->post($url.':batchUpdate', ['requests' => $ids->map(fn ($id) => ['sortRange' => [
+                'range' => ['sheetId' => $id, 'startRowIndex' => 1, 'startColumnIndex' => 0, 'endColumnIndex' => 26],
+                'sortSpecs' => [['dimensionIndex' => $column, 'sortOrder' => 'ASCENDING']],
+            ]])->values()->all()])->throw();
+        }
     }
 
     /**

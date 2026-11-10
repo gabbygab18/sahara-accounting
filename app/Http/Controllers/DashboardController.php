@@ -31,7 +31,7 @@ class DashboardController extends Controller
             // Dated by the invoice, or by the DR while there is no invoice yet (as in Records).
             ->when($filters['from'] ?? null, fn ($q, $d) => $q->whereRaw('COALESCE(si_date, dr_date) >= ?', [$d]))
             ->when($filters['to'] ?? null, fn ($q, $d) => $q->whereRaw('COALESCE(si_date, dr_date) <= ?', [$d]))
-            ->get(['id', 'company', 'sold_to', 'project', 'si_number', 'dr_number', 'dr_date', 'po_number', 'si_date', 'terms_days', 'amount', 'paid', 'paid_confirmed', 'cash', 'si_missing', 'wrong_computation', 'check_number', 'check_date', 'check_cleared', 'or_date']);
+            ->get(['id', 'company', 'sold_to', 'project', 'si_number', 'dr_number', 'dr_date', 'po_number', 'si_date', 'counter_date', 'terms_days', 'amount', 'paid', 'paid_confirmed', 'cash', 'si_missing', 'wrong_computation', 'check_number', 'check_date', 'check_cleared', 'or_date']);
         $sum = fn ($rows) => [
             'count' => $rows->count(),
             'paid' => round($rows->filter(fn ($r) => $r->payment() === 'paid')->sum('amount'), 2),

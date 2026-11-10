@@ -33,6 +33,7 @@ const blank: Form = {
     po_date: '',
     po_number: '',
     terms_days: '30',
+    counter_date: '',
     drs: [blankDr],
     sis: [blankSi],
     or_date: '',
@@ -195,6 +196,7 @@ function Review({ data, canConfirm }: { data: Form; canConfirm: boolean }) {
         ['TIN', data.tin ?? ''],
         ['PO', join([data.po_number, data.po_date && prettyDate(data.po_date)])],
         ['Terms', data.terms_days === '' ? '' : terms(Number(data.terms_days))],
+        ['Counter date', data.counter_date ? prettyDate(data.counter_date) : ''],
         [
             'DR',
             data.drs
@@ -317,7 +319,7 @@ export function RecordDialog({
             <Numbers id={`r-${key}`} noun={label.replace(' #', '')} value={data[key] ?? ''} onChange={(v) => setData(key, v)} />
         </Field>
     );
-    const date = (key: 'po_date' | 'check_date' | 'or_date', label: string) => (
+    const date = (key: 'po_date' | 'counter_date' | 'check_date' | 'or_date', label: string) => (
         <Field label={label} error={errors[key]}>
             <DatePicker value={data[key] ?? ''} onChange={(v) => setData(key, v)} clearable />
         </Field>
@@ -372,10 +374,14 @@ export function RecordDialog({
                             {text('envelope_number', 'Envelope #', { placeholder: 'Optional' })}
                         </section>
 
-                        <section className="grid gap-3 border-t pt-4 sm:grid-cols-3">
+                        <section className="grid gap-3 border-t pt-4 sm:grid-cols-2">
                             {date('po_date', 'PO date')}
                             {numbers('po_number', 'PO #')}
                             {text('terms_days', 'Terms (days)', { inputMode: 'numeric', placeholder: '30, or 0 for COD' })}
+                            {date('counter_date', 'Counter date')}
+                            <p className="text-muted-foreground -mt-1 text-xs sm:col-span-2">
+                                The terms count from the counter date (from the SI date until it is countered).
+                            </p>
                         </section>
 
                         <section className="grid gap-1.5 border-t pt-4">

@@ -18,7 +18,7 @@ class RecordTest extends TestCase
         return [
             'company' => 'Cityland Dev Corp', 'sold_to' => 'Pines Peak Towers', 'project' => 'Ground up', 'tin' => '008-424-957-000',
             'po_date' => '2026-10-01', 'po_number' => 'PO-114', 'terms_days' => 30, 'paid' => false,
-            'check_number' => null, 'check_date' => null, 'check_cleared' => false, 'or_date' => null, 'or_number' => null, 'paid_confirmed' => false, 'cash' => false, 'si_cancelled' => false, 'booklet_number' => null, 'envelope_number' => null,
+            'check_number' => null, 'check_date' => null, 'check_cleared' => false, 'or_date' => null, 'or_number' => null, 'paid_confirmed' => false, 'cash' => false, 'si_cancelled' => false, 'booklet_number' => null, 'envelope_number' => null, 'counter_date' => null,
             'drs' => [['date' => '2026-10-05', 'number' => 'DR-1', 'status' => 'Delivered']],
             ...$this->si('194651', 394.45),
             ...$overrides,
@@ -94,6 +94,22 @@ class RecordTest extends TestCase
         $this->assertSame([true, true, '5521', '2026-11-10', '88', '2026-11-07'], $paid($a->fresh()));
         $this->assertSame([true, true, '5522', null, '89', '2026-11-07'], $paid($b->fresh()));
         $this->assertFalse($cancelled->fresh()->paid);
+    }
+
+    public function test_the_terms_count_from_the_counter_date()
+    {
+        $this->actingAs(User::factory()->create());
+        $this->post('/records', $this->invoice(['terms_days' => 30, ...$this->si('194651', 100, '2026-10-01')]))->assertSessionHasNoErrors();
+        $record = Record::sole();
+        $this->assertSame('2026-10-31', $record->dueOn()->toDateString()); // not countered yet: from the SI date
+
+        $this->put("/records/{$record->id}", [...$this->invoice(['terms_days' => 30, ...$this->si('194651', 100, '2026-10-01')]), 'counter_date' => '2026-10-10'])->assertSessionHasNoErrors();
+        $record->refresh();
+        $this->assertSame(['2026-10-10', '2026-11-09'], [$record->counter_date->toDateString(), $record->dueOn()->toDateString()]);
+        // In the sheet, between SI amount and terms.
+        $columns = array_keys(Record::COLUMNS);
+        $this->assertSame(['si_amount', 'counter_date', 'terms_days'], array_slice($columns, array_search('si_amount', $columns, true), 3));
+        $this->assertSame('2026-10-10', Record::fromRow($record->toRow())['counter_date']);
     }
 
     public function test_a_wrong_computation_is_flagged_to_recheck()
