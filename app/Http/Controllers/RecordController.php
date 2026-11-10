@@ -22,7 +22,7 @@ class RecordController extends Controller
     private const FILTERS = ['q', 'in', 'company', 'project', 'delivery', 'payment', 'from', 'to', 'show', 'order'];
 
     /** ?show= lists from the summary: an unpaid age group (Record::AGING), or delivered but not yet invoiced. */
-    public const SHOWS = ['not-invoiced' => 'Delivered, not yet invoiced', 'missing' => 'To recheck (wrong computation, or no actual SI, SI date or terms)'];
+    public const SHOWS = ['not-invoiced' => 'Delivered, not yet invoiced', 'missing' => 'To recheck (wrong computation, or no actual SI, SI date or terms)', 'uncleared' => 'Checks not cleared'];
 
     public function index(Request $request): Response
     {
@@ -87,6 +87,21 @@ class RecordController extends Controller
         $this->syncSheetSoon();
 
         return back()->with('success', 'Confirmed '.$records->count().' '.Str::plural('payment', $records->count()).'.');
+    }
+
+    /** The ticked checks marked cleared, from Records (Checks not cleared). */
+    public function clearMany(Request $request): RedirectResponse
+    {
+        $ids = $request->validate(['ids' => ['required', 'array', 'max:500'], 'ids.*' => ['integer']])['ids'];
+        $records = Record::whereIn('id', $ids)->uncleared()->get();
+        foreach ($records as $record) {
+            $record->fill(['check_cleared' => true])->pending_sync = true;
+            Activity::log($request->user(), 'edited', $record);
+            $record->save();
+        }
+        $this->syncSheetSoon();
+
+        return back()->with('success', 'Marked '.$records->count().' '.Str::plural('check', $records->count()).' cleared.');
     }
 
     /** "Mark paid" from the list: the check (or cash) and the OR. From an agent it waits for the admin's double check. */
@@ -198,6 +213,7 @@ class RecordController extends Controller
             ->when($request->from, fn ($q, $d) => $q->whereRaw('COALESCE(si_date, dr_date) >= ?', [$d]))
             ->when($request->to, fn ($q, $d) => $q->whereRaw('COALESCE(si_date, dr_date) <= ?', [$d]))
             ->when($request->show === 'not-invoiced', fn ($q) => $q->whereNotNull('dr_number')->whereNull('si_number'))
+            ->when($request->show === 'uncleared', fn ($q) => $q->uncleared())
             ->when($request->show === 'missing', fn ($q) => $q->whereIn('id', Record::get(['id', 'paid', 'si_date', 'counter_date', 'terms_days', 'si_missing', 'si_cancelled', 'wrong_computation'])
                 ->filter->missing()->modelKeys()))
             // ponytail: due dates are worked out in PHP (date maths differs per SQL dialect); fine into the tens of thousands

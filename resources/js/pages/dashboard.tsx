@@ -638,7 +638,20 @@ export default function Dashboard({
             </Card>
 
             <Card id="checks" className="min-w-0 scroll-mt-20 xl:col-span-7">
-                <CardTitle hint="Paid by check, not yet marked Cleared.">Checks not cleared</CardTitle>
+                <CardTitle
+                    hint={
+                        <>
+                            Paid by check, not yet marked Cleared.{' '}
+                            {uncleared.count > 0 && (
+                                <Link href={scoped({ show: 'uncleared' })} className="text-primary font-medium hover:underline">
+                                    See all {fmt(uncleared.count)} to tick the cleared ones
+                                </Link>
+                            )}
+                        </>
+                    }
+                >
+                    Checks not cleared
+                </CardTitle>
                 <ul className="divide-y">
                     {uncleared.rows.length === 0 && <Empty>Every check has cleared.</Empty>}
                     {uncleared.rows.map((r) => (

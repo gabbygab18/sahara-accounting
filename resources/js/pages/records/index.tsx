@@ -75,6 +75,7 @@ export default function Records({
     const ticked = records.data.filter((r) => selected.includes(r.id));
     const checking = canConfirm ? ticked.filter((r) => r.paid && !r.paid_confirmed) : [];
     const unpaid = canEdit ? ticked.filter((r) => !r.paid && !r.si_cancelled) : [];
+    const uncleared = canEdit ? ticked.filter((r) => r.paid && !r.cash && !r.check_cleared && (r.check_number || r.check_date)) : [];
     const query = new URLSearchParams(Object.entries(filters).filter(([, v]) => v) as [string, string][]).toString();
 
     const go = (params: Filters & { page?: number }) => {
@@ -223,8 +224,8 @@ export default function Records({
                         <span>
                             <b>{ticked.length}</b> ticked · <b className="tabular-nums">{peso(ticked.reduce((sum, r) => sum + r.amount, 0))}</b>
                         </span>
-                        {!unpaid.length && !checking.length && (
-                            <span className="text-muted-foreground text-xs">Nothing to mark paid or confirm in these.</span>
+                        {!unpaid.length && !checking.length && !uncleared.length && (
+                            <span className="text-muted-foreground text-xs">Nothing to mark paid, cleared or confirm in these.</span>
                         )}
                         <span className="ml-auto flex flex-wrap gap-2">
                             <Button size="sm" variant="ghost" onClick={() => setSelected([])}>
@@ -233,6 +234,21 @@ export default function Records({
                             {unpaid.length > 0 && (
                                 <Button size="sm" variant={checking.length ? 'outline' : 'default'} onClick={() => setPaying(unpaid)}>
                                     Mark {unpaid.length} unpaid as paid
+                                </Button>
+                            )}
+                            {uncleared.length > 0 && (
+                                <Button
+                                    size="sm"
+                                    variant={checking.length ? 'outline' : 'default'}
+                                    onClick={() =>
+                                        router.patch(
+                                            route('records.clear-many'),
+                                            { ids: uncleared.map((r) => r.id) },
+                                            { preserveScroll: true, onSuccess: () => setSelected([]) },
+                                        )
+                                    }
+                                >
+                                    Mark {uncleared.length === 1 ? 'check' : `${uncleared.length} checks`} cleared
                                 </Button>
                             )}
                             {checking.length > 0 && (

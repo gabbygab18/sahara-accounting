@@ -233,6 +233,13 @@ class Record extends Model
     /** What the search can be narrowed to: ?in= => column. Booklet and envelope match whole (booklet 3 is not 30). */
     public const SEARCH_IN = ['si' => 'si_number', 'booklet' => 'booklet_number', 'envelope' => 'envelope_number', 'or' => 'or_number', 'check' => 'check_number', 'po' => 'po_number', 'dr' => 'dr_number'];
 
+    /** Paid by check, not yet cleared. */
+    public function scopeUncleared(Builder $q): void
+    {
+        $q->where('paid', true)->where('cash', false)->where('check_cleared', false)
+            ->where(fn ($q) => $q->whereNotNull('check_number')->orWhereNotNull('check_date'));
+    }
+
     public function scopeSearch(Builder $q, string $text, ?string $in = null): void
     {
         $text = trim($text);

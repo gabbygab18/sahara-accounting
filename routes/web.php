@@ -25,6 +25,7 @@ Route::middleware(['auth'])->group(function () {
     Route::put('records/{record}', [RecordController::class, 'update'])->middleware('can:edit')->name('records.update');
     Route::patch('records/pay', [RecordController::class, 'payMany'])->middleware('can:edit')->name('records.pay-many');
     Route::patch('records/{record}/pay', [RecordController::class, 'pay'])->middleware('can:edit')->name('records.pay');
+    Route::patch('records/clear', [RecordController::class, 'clearMany'])->middleware('can:edit')->name('records.clear-many');
     Route::patch('records/confirm', [RecordController::class, 'confirmMany'])->middleware('can:confirm')->name('records.confirm-many');
     Route::patch('records/{record}/confirm', [RecordController::class, 'confirm'])->middleware('can:confirm')->name('records.confirm');
     Route::delete('records/{record}', [RecordController::class, 'destroy'])->middleware('can:delete')->name('records.destroy');

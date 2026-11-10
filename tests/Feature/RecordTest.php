@@ -78,6 +78,20 @@ class RecordTest extends TestCase
         $this->assertFalse($c->fresh()->paid);
     }
 
+    public function test_ticked_checks_marked_cleared()
+    {
+        $this->actingAs(User::factory()->create());
+        $a = Record::create($this->invoice(['paid' => true, 'check_number' => 'MBTC 1']));
+        $b = Record::create($this->invoice([...$this->si('2', 10), 'paid' => true, 'check_date' => '2026-11-09']));
+        $c = Record::create($this->invoice([...$this->si('3', 10), 'paid' => true, 'cash' => true])); // cash: no check to clear
+        $d = Record::create($this->invoice([...$this->si('4', 10), 'check_number' => 'MBTC 4'])); // unpaid
+
+        $this->get('/records?show=uncleared')->assertInertia(fn ($page) => $page->where('records.total', 2)->where('show', 'Checks not cleared'));
+        $this->patch('/records/clear', ['ids' => [$a->id, $b->id, $c->id, $d->id]])->assertSessionHas('success', 'Marked 2 checks cleared.');
+        $this->assertSame([true, true, false, false], [$a->fresh()->check_cleared, $b->fresh()->check_cleared, $c->fresh()->check_cleared, $d->fresh()->check_cleared]);
+        $this->assertTrue($a->fresh()->pending_sync);
+    }
+
     public function test_ticked_records_paid_by_one_check()
     {
         $this->actingAs(User::factory()->create());
