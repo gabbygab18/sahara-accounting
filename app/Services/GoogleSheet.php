@@ -252,7 +252,7 @@ class GoogleSheet
      * @param  array{columns: int, colors: array<int, array<string, string>>, lists: array<int, list<string>>, money: list<int>,
      *     centered: list<int>, dates: list<int>, sections: list<array{int, int, string}>}  $style  by column index:
      *     colors = cell text => background "#rrggbb", lists = dropdown choices (other values still allowed), money = ₱1,234.50
-     *     right-aligned, centered, dates = 03/10/2026, sections = [first, last, header colour]; the rest sits top-left
+     *     right-aligned, centered, dates = 03/10/2026, text = kept as typed (leading zeros), sections = [first, last, header colour]; the rest sits top-left
      */
     public function styleTabs(array $tabs, array $style): void
     {
@@ -297,6 +297,9 @@ class GoogleSheet
             }
             foreach ($style['dates'] as $col) {
                 $requests[] = $format($column($col), ['numberFormat' => ['type' => 'DATE', 'pattern' => 'mm/dd/yyyy']], 'numberFormat');
+            }
+            foreach ($style['text'] ?? [] as $col) {
+                $requests[] = $format($column($col), ['numberFormat' => ['type' => 'TEXT']], 'numberFormat');
             }
             foreach ($style['centered'] as $col) {
                 $requests[] = $format($column($col), ['horizontalAlignment' => 'CENTER'], 'horizontalAlignment');

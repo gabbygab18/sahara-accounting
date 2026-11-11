@@ -213,7 +213,7 @@ class SheetSync
         $log->pushed = count($sent);
 
         // Header colours, banding, filter, paid green / unpaid red, dropdowns, ₱ amounts, dates and alignment: once per tab (repeating is harmless, so a cleared cache only redoes it).
-        $key = fn ($tab) => 'sheets-styled-v10:'.($this->sheet->spreadsheetId ?? '').':'.$tab;
+        $key = fn ($tab) => 'sheets-styled-v11:'.($this->sheet->spreadsheetId ?? '').':'.$tab;
         if ($unstyled = array_values(array_filter(array_map('strval', array_keys($next)), fn ($tab) => ! Cache::has($key($tab))))) {
             $col = fn ($column) => array_search($column, array_keys(Record::COLUMNS), true) - 1;
             $this->sheet->styleTabs($unstyled, [
@@ -223,6 +223,8 @@ class SheetSync
                 'money' => [$col('si_amount'), $col('amount')],
                 'centered' => [$col('terms_days')],
                 'dates' => array_map($col, Record::DATES),
+                // Kept as typed: 000023-23 keeps its zeros.
+                'text' => array_map($col, ['tin', 'po_number', 'dr_number', 'check_number', 'or_number']),
                 'sections' => [
                     [$col('sold_to'), $col('tin'), '#334155'],
                     [$col('po_date'), $col('po_number'), '#1e40af'],
