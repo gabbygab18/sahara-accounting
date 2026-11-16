@@ -90,6 +90,15 @@ class RecordTest extends TestCase
         $this->patch('/records/clear', ['ids' => [$a->id, $b->id, $c->id, $d->id]])->assertSessionHas('success', 'Marked 2 checks cleared.');
         $this->assertSame([true, true, false, false], [$a->fresh()->check_cleared, $b->fresh()->check_cleared, $c->fresh()->check_cleared, $d->fresh()->check_cleared]);
         $this->assertTrue($a->fresh()->pending_sync);
+
+        // Clearing is the admin's countercheck: a secretary who may confirm payments still cannot, here or in the edit form.
+        $e = Record::create($this->invoice([...$this->si('5', 10), 'paid' => true, 'paid_confirmed' => true, 'check_number' => 'MBTC 5']));
+        $this->actingAs(User::factory()->create(['role' => 'custom', 'permissions' => ['records', 'edit', 'confirm']]));
+        $this->patch('/records/clear', ['ids' => [$e->id]])->assertForbidden();
+        $this->put("/records/{$e->id}", $this->invoice([...$this->si('5', 10), 'paid' => true, 'check_number' => 'MBTC 5', 'check_cleared' => true]))->assertSessionHasNoErrors();
+        $this->assertFalse($e->fresh()->check_cleared);
+        $this->put("/records/{$a->id}", $this->invoice(['paid' => true, 'check_number' => 'MBTC 1']))->assertSessionHasNoErrors();
+        $this->assertTrue($a->fresh()->check_cleared); // an admin's clearing stays
     }
 
     public function test_ticked_records_paid_by_one_check()

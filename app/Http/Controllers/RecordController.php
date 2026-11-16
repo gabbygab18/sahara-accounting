@@ -89,7 +89,7 @@ class RecordController extends Controller
         return back()->with('success', 'Confirmed '.$records->count().' '.Str::plural('payment', $records->count()).'.');
     }
 
-    /** The ticked checks marked cleared, from Records (Checks not cleared). */
+    /** The ticked checks marked cleared, from Records (Checks not cleared): the admin's countercheck. */
     public function clearMany(Request $request): RedirectResponse
     {
         $ids = $request->validate(['ids' => ['required', 'array', 'max:500'], 'ids.*' => ['integer']])['ids'];
@@ -322,6 +322,10 @@ class RecordController extends Controller
         if (! $request->user()->can('confirm')) {
             // The agent's "paid" waits for the admin's double check; a confirmed payment stays as the admin left it.
             [$data['paid'], $data['paid_confirmed']] = $record?->paid_confirmed ? [true, true] : [$data['paid'], false];
+        }
+        if (! $request->user()->can('clear')) {
+            // Clearing a check is the admin's countercheck: left as it was.
+            $data['check_cleared'] = ! $data['cash'] && (bool) $record?->check_cleared;
         }
 
         return array_map(fn ($v) => is_string($v) ? trim($v) : $v, $data);

@@ -1,5 +1,5 @@
 /** Keys from the checklist on Settings → Users (App\Models\User::PERMISSIONS). */
-export type Permission = 'dashboard' | 'records' | 'add' | 'edit' | 'delete' | 'confirm' | 'export' | 'history' | 'settings';
+export type Permission = 'dashboard' | 'records' | 'add' | 'edit' | 'delete' | 'confirm' | 'clear' | 'export' | 'history' | 'settings';
 
 export interface Auth {
     user: User;

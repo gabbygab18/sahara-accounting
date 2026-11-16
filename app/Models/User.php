@@ -22,13 +22,14 @@ class User extends Authenticatable
         'edit' => 'Edit records',
         'delete' => 'Delete records',
         'confirm' => 'Confirm payments (double check)',
+        'clear' => 'Mark checks cleared (countercheck)',
         'export' => 'Export Excel / CSV',
         'history' => 'Activity log',
         'settings' => 'Users and Google Sheets settings',
     ];
 
     public const PRESETS = [
-        'admin' => ['dashboard', 'records', 'add', 'edit', 'delete', 'confirm', 'export', 'history', 'settings'],
+        'admin' => ['dashboard', 'records', 'add', 'edit', 'delete', 'confirm', 'clear', 'export', 'history', 'settings'],
         'staff' => ['dashboard', 'records', 'add', 'edit', 'export'],
     ];
 

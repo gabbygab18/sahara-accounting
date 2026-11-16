@@ -44,6 +44,9 @@ const SEARCH_IN = [
     { value: 'dr', label: 'DR #' },
 ];
 
+// Paid by check that has not cleared yet: "For clearing" until it is marked Cleared.
+const clearing = (r: AccountingRecord) => r.paid && !r.cash && !r.check_cleared && !!(r.check_number || r.check_date);
+
 const DELIVERY_VARIANT: Record<string, 'success' | 'warning' | 'secondary'> = { Delivered: 'success', Partial: 'warning' };
 
 export default function Records({
@@ -71,11 +74,13 @@ export default function Records({
     const canAdd = useCan('add');
     const canExport = useCan('export');
     const canConfirm = useCan('confirm');
+    const canClear = useCan('clear');
     const projects = options.companies.find((c) => c.name === filters.company)?.projects ?? [];
     const ticked = records.data.filter((r) => selected.includes(r.id));
     const checking = canConfirm ? ticked.filter((r) => r.paid && !r.paid_confirmed) : [];
     const unpaid = canEdit ? ticked.filter((r) => !r.paid && !r.si_cancelled) : [];
-    const uncleared = canEdit ? ticked.filter((r) => r.paid && !r.cash && !r.check_cleared && (r.check_number || r.check_date)) : [];
+    // Clearing a check is the admin's countercheck.
+    const uncleared = canClear ? ticked.filter(clearing) : [];
     const query = new URLSearchParams(Object.entries(filters).filter(([, v]) => v) as [string, string][]).toString();
 
     const go = (params: Filters & { page?: number }) => {
@@ -274,7 +279,7 @@ export default function Records({
                 )}
 
                 <ResponsiveTable
-                    selectable={canEdit || canConfirm}
+                    selectable={canEdit || canConfirm || canClear}
                     selected={selected}
                     onSelectionChange={setSelected}
                     rows={records.data}
@@ -331,6 +336,21 @@ export default function Records({
                                     <Badge size="sm" variant="secondary">
                                         Cancelled
                                     </Badge>
+                                ) : r.paid && r.paid_confirmed && clearing(r) ? (
+                                    <span className="flex flex-wrap items-center gap-1.5">
+                                        <Badge size="sm" variant="warning">
+                                            For clearing
+                                        </Badge>
+                                        {canClear && (
+                                            <button
+                                                type="button"
+                                                className="text-primary text-xs font-medium hover:underline"
+                                                onClick={() => router.patch(route('records.clear-many'), { ids: [r.id] }, { preserveScroll: true })}
+                                            >
+                                                Cleared
+                                            </button>
+                                        )}
+                                    </span>
                                 ) : r.paid && r.paid_confirmed ? (
                                     <Badge size="sm" variant="success">
                                         Paid

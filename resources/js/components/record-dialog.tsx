@@ -259,6 +259,7 @@ export function RecordDialog({
     const [options, setOptions] = useState<RecordOptions>();
     const canDelete = useCan('delete');
     const canConfirm = useCan('confirm');
+    const canClear = useCan('clear');
     // Staff cannot undo the admin's double check.
     const locked = !canConfirm && !!editing?.paid_confirmed;
     const [confirming, setConfirming] = useState(false);
@@ -506,12 +507,19 @@ export function RecordDialog({
                                         {text('check_number', 'Check #')}
                                         {date('check_date', 'Check date (for deposit)')}
                                         <Field label="Check">
-                                            <StretchTabs
-                                                label="Check cleared"
-                                                options={['Not cleared', 'Cleared']}
-                                                value={data.check_cleared ? 'Cleared' : 'Not cleared'}
-                                                onChange={(v) => setData('check_cleared', v === 'Cleared')}
-                                            />
+                                            {/* Clearing is the admin's countercheck. */}
+                                            {canClear ? (
+                                                <StretchTabs
+                                                    label="Check cleared"
+                                                    options={['Not cleared', 'Cleared']}
+                                                    value={data.check_cleared ? 'Cleared' : 'Not cleared'}
+                                                    onChange={(v) => setData('check_cleared', v === 'Cleared')}
+                                                />
+                                            ) : (
+                                                <p className="text-muted-foreground py-2 text-sm">
+                                                    {data.check_cleared ? 'Cleared' : 'Not cleared yet (the admin clears it)'}
+                                                </p>
+                                            )}
                                         </Field>
                                     </>
                                 )}
