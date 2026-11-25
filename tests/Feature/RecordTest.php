@@ -81,14 +81,22 @@ class RecordTest extends TestCase
     public function test_ticked_checks_marked_cleared()
     {
         $this->actingAs(User::factory()->create());
-        $a = Record::create($this->invoice(['paid' => true, 'check_number' => 'MBTC 1']));
-        $b = Record::create($this->invoice([...$this->si('2', 10), 'paid' => true, 'check_date' => '2026-11-09']));
-        $c = Record::create($this->invoice([...$this->si('3', 10), 'paid' => true, 'cash' => true])); // cash: no check to clear
+        $a = Record::create($this->invoice(['paid' => true, 'paid_confirmed' => true, 'check_number' => 'MBTC 1']));
+        $b = Record::create($this->invoice([...$this->si('2', 10), 'paid' => true, 'paid_confirmed' => true, 'check_date' => '2026-11-09']));
+        $c = Record::create($this->invoice([...$this->si('3', 10), 'paid' => true, 'paid_confirmed' => true, 'cash' => true])); // cash: no check to clear
         $d = Record::create($this->invoice([...$this->si('4', 10), 'check_number' => 'MBTC 4'])); // unpaid
+        $f = Record::create($this->invoice([...$this->si('6', 10), 'paid' => true, 'check_number' => 'MBTC 6'])); // For checking first
+        $g = Record::create($this->invoice([...$this->si('7', 10), 'si_cancelled' => true]));
 
-        $this->get('/records?show=uncleared')->assertInertia(fn ($page) => $page->where('records.total', 2)->where('show', 'Checks not cleared'));
-        $this->patch('/records/clear', ['ids' => [$a->id, $b->id, $c->id, $d->id]])->assertSessionHas('success', 'Marked 2 checks cleared.');
-        $this->assertSame([true, true, false, false], [$a->fresh()->check_cleared, $b->fresh()->check_cleared, $c->fresh()->check_cleared, $d->fresh()->check_cleared]);
+        $this->get('/records?show=uncleared')->assertInertia(fn ($page) => $page->where('records.total', 2)->where('show', 'For clearing (checks not cleared)'));
+        $this->get('/records?show=cancelled')->assertInertia(fn ($page) => $page->where('records.total', 1)->where('records.data.0.id', $g->id));
+        // On the dashboard: flagged For checking, For clearing and cancelled SIs, each apart.
+        $this->get('/dashboard')->assertInertia(fn ($page) => $page
+            ->where('checking.count', 1)->where('checking.rows.0.check_number', 'MBTC 6')
+            ->where('uncleared.count', 2)
+            ->where('cancelled.count', 1)->where('cancelled.rows.0.id', $g->id)->where('totals.count', 5));
+        $this->patch('/records/clear', ['ids' => [$a->id, $b->id, $c->id, $d->id, $f->id]])->assertSessionHas('success', 'Marked 2 checks cleared.');
+        $this->assertSame([true, true, false, false, false], [$a->fresh()->check_cleared, $b->fresh()->check_cleared, $c->fresh()->check_cleared, $d->fresh()->check_cleared, $f->fresh()->check_cleared]);
         $this->assertTrue($a->fresh()->pending_sync);
 
         // Clearing is the admin's countercheck: a secretary who may confirm payments still cannot, here or in the edit form.

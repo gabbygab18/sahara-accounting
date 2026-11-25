@@ -12,9 +12,9 @@ use Inertia\Inertia;
 use Inertia\Response;
 
 /**
- * What needs doing: money to collect (by how late, by company), payments to confirm, checks not yet cleared, deliveries not
+ * What needs doing: money to collect (by how late, by company), payments flagged for checking, checks not yet cleared, deliveries not
  * yet invoiced, invoices missing their due date, skipped SI / DR numbers; billed vs collected per month; paid / unpaid
- * overall and per group. Filtered by group and date.
+ * overall and per group; cancelled SIs apart. Filtered by group and date.
  */
 class DashboardController extends Controller
 {
@@ -25,13 +25,13 @@ class DashboardController extends Controller
         }
         $filters = $request->validate(['company' => ['nullable', 'string'], 'from' => ['nullable', 'date'], 'to' => ['nullable', 'date']]);
         // ponytail: every record loaded once and summed in PHP (due dates differ per SQL dialect); fine into the tens of thousands
-        $records = Record::query()
-            ->where('si_cancelled', false) // a cancelled SI is no sale
+        $inRange = Record::query()
             ->when($filters['company'] ?? null, fn ($q, $c) => $q->where('company', $c))
             // Dated by the invoice, or by the DR while there is no invoice yet (as in Records).
             ->when($filters['from'] ?? null, fn ($q, $d) => $q->whereRaw('COALESCE(si_date, dr_date) >= ?', [$d]))
             ->when($filters['to'] ?? null, fn ($q, $d) => $q->whereRaw('COALESCE(si_date, dr_date) <= ?', [$d]))
-            ->get(['id', 'company', 'sold_to', 'project', 'si_number', 'dr_number', 'dr_date', 'po_number', 'si_date', 'counter_date', 'terms_days', 'amount', 'paid', 'paid_confirmed', 'cash', 'si_missing', 'wrong_computation', 'check_number', 'check_date', 'check_cleared', 'or_date']);
+            ->get(['si_cancelled', 'id', 'company', 'sold_to', 'project', 'si_number', 'dr_number', 'dr_date', 'po_number', 'si_date', 'counter_date', 'terms_days', 'amount', 'paid', 'paid_confirmed', 'cash', 'si_missing', 'wrong_computation', 'check_number', 'check_date', 'check_cleared', 'or_date']);
+        [$cancelled, $records] = $inRange->partition('si_cancelled'); // a cancelled SI is no sale: listed apart
         $sum = fn ($rows) => [
             'count' => $rows->count(),
             'paid' => round($rows->filter(fn ($r) => $r->payment() === 'paid')->sum('amount'), 2),
@@ -42,7 +42,8 @@ class DashboardController extends Controller
         $brief = fn (Record $r) => $r->only('id', 'company', 'sold_to', 'project', 'si_number', 'dr_number', 'po_number', 'amount');
         $unpaid = $records->where('paid', false);
         $paidOn = fn (Record $r) => $r->or_date ?? $r->check_date; // the OR, else the check (or the cash)
-        $uncleared = $records->filter(fn ($r) => $r->paid && ! $r->cash && ! $r->check_cleared && ($r->check_number || $r->check_date));
+        $checking = $records->filter(fn ($r) => $r->payment() === 'checking'); // flagged: a problem with the receipt, or not sure
+        $uncleared = $records->filter(fn ($r) => $r->payment() === 'paid' && ! $r->cash && ! $r->check_cleared && ($r->check_number || $r->check_date));
         $notInvoiced = $records->filter(fn ($r) => $r->dr_number && ! $r->si_number);
         $noDue = $records->filter->missing(); // computed wrong, the actual SI lost, or unpaid without an SI date or terms
 
@@ -54,7 +55,6 @@ class DashboardController extends Controller
                 'billed' => round($records->filter(fn ($r) => $r->si_date?->isSameMonth(today()))->sum('amount'), 2),
                 'collected' => round($records->filter(fn ($r) => $r->paid && $paidOn($r)?->isSameMonth(today()))->sum('amount'), 2),
             ],
-            'checkingCount' => $records->filter(fn ($r) => $r->payment() === 'checking')->count(),
             'aging' => collect(Record::AGING)->map(function ($bucket, $key) use ($unpaid, $brief) {
                 $rows = $unpaid->filter(fn ($r) => $r->age() === $key);
 
@@ -85,6 +85,16 @@ class DashboardController extends Controller
                 'count' => $noDue->count(),
                 'rows' => $noDue->sortByDesc('id')->take(15)
                     ->map(fn (Record $r) => [...$brief($r), 'missing' => $r->missing()])->values(),
+            ],
+            'checking' => [
+                'count' => $checking->count(),
+                'rows' => $checking->sortByDesc('id')->take(15)
+                    ->map(fn (Record $r) => [...$brief($r), ...$r->only('cash', 'check_number')])->values(),
+            ],
+            'cancelled' => [
+                'count' => $cancelled->count(),
+                'amount' => round($cancelled->sum('amount'), 2),
+                'rows' => $cancelled->sortByDesc('id')->take(15)->map($brief)->values(),
             ],
             'uncleared' => [
                 'count' => $uncleared->count(),

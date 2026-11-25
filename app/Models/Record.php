@@ -236,7 +236,8 @@ class Record extends Model
     /** Paid by check, not yet cleared. */
     public function scopeUncleared(Builder $q): void
     {
-        $q->where('paid', true)->where('cash', false)->where('check_cleared', false)
+        // Confirmed paid only: one still For checking shows there, not For clearing.
+        $q->where('paid', true)->where('paid_confirmed', true)->where('cash', false)->where('check_cleared', false)
             ->where(fn ($q) => $q->whereNotNull('check_number')->orWhereNotNull('check_date'));
     }
 

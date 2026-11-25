@@ -52,7 +52,8 @@ interface Props {
     groups: string[];
     totals: Sums;
     month: { billed: number; collected: number };
-    checkingCount: number;
+    checking: { count: number; rows: (Brief & { cash: boolean; check_number: string | null })[] };
+    cancelled: { count: number; amount: number; rows: Brief[] };
     aging: { key: string; label: string; count: number; amount: number; top: (Brief & { late: number | null })[] }[];
     debtors: { name: string; group: string; unpaid: number; overdue: number; count: number; days: number | null }[];
     trend: Month[];
@@ -328,7 +329,8 @@ export default function Dashboard({
     groups,
     totals,
     month,
-    checkingCount,
+    checking,
+    cancelled,
     aging,
     collect,
     debtors,
@@ -366,15 +368,15 @@ export default function Dashboard({
             href: scoped({ payment: 'checking' }),
             icon: <Eye />,
             cls: 'from-sky-400 to-sky-600 text-white',
-            hint: checkingCount ? `${plural(checkingCount, 'payment')} to confirm` : 'Nothing to confirm',
+            hint: checking.count ? `${plural(checking.count, 'payment')} to check` : 'Nothing to check',
         },
         {
-            label: 'Checks not cleared',
+            label: 'For clearing',
             value: uncleared.amount,
             href: '#checks',
             icon: <AlarmClock />,
             cls: 'from-amber-400 to-amber-600 text-white',
-            hint: plural(uncleared.count, 'check'),
+            hint: `${plural(uncleared.count, 'check')} not cleared`,
         },
         {
             label: 'Collected this month',
@@ -637,11 +639,40 @@ export default function Dashboard({
                 </ul>
             </Card>
 
-            <Card id="checks" className="min-w-0 scroll-mt-20 xl:col-span-7">
+            <Card className="min-w-0 xl:col-span-6">
                 <CardTitle
                     hint={
                         <>
-                            Paid by check, not yet marked Cleared.{' '}
+                            Marked paid, but flagged to check first: a problem with the receipt, or not sure.{' '}
+                            {checking.count > 0 && (
+                                <Link href={scoped({ payment: 'checking' })} className="text-primary font-medium hover:underline">
+                                    See all {fmt(checking.count)} to confirm
+                                </Link>
+                            )}
+                        </>
+                    }
+                >
+                    For checking
+                </CardTitle>
+                <ul className="divide-y">
+                    {checking.rows.length === 0 && <Empty>Nothing to check.</Empty>}
+                    {checking.rows.map((r) => (
+                        <Row
+                            key={r.id}
+                            r={r}
+                            sub={[r.sold_to, r.project].filter(Boolean).join(' · ') || 'No company'}
+                            note={r.cash ? 'Cash' : r.check_number ? `Check ${r.check_number}` : 'Paid'}
+                            noteCls="text-sky-600"
+                        />
+                    ))}
+                </ul>
+            </Card>
+
+            <Card id="checks" className="min-w-0 scroll-mt-20 xl:col-span-6">
+                <CardTitle
+                    hint={
+                        <>
+                            Paid by check and confirmed, not yet marked Cleared.{' '}
                             {uncleared.count > 0 && (
                                 <Link href={scoped({ show: 'uncleared' })} className="text-primary font-medium hover:underline">
                                     See all {fmt(uncleared.count)} to tick the cleared ones
@@ -650,7 +681,7 @@ export default function Dashboard({
                         </>
                     }
                 >
-                    Checks not cleared
+                    For clearing
                 </CardTitle>
                 <ul className="divide-y">
                     {uncleared.rows.length === 0 && <Empty>Every check has cleared.</Empty>}
@@ -666,17 +697,7 @@ export default function Dashboard({
                 </ul>
             </Card>
 
-            <Card className="min-w-0 xl:col-span-5">
-                <CardTitle hint="Numbers from the booklet's first # up to the highest one entered that are not in the records: skipped, cancelled or not yet entered.">
-                    Skipped receipts
-                </CardTitle>
-                <div className="space-y-5">
-                    <Skipped doc="si" label="SI #" gaps={skipped.si} />
-                    <Skipped doc="dr" label="DR #" gaps={skipped.dr} />
-                </div>
-            </Card>
-
-            <Card className="min-w-0 xl:col-span-5">
+            <Card className="min-w-0 xl:col-span-7">
                 <CardTitle
                     hint={
                         <>
@@ -704,6 +725,16 @@ export default function Dashboard({
                         />
                     ))}
                 </ul>
+            </Card>
+
+            <Card className="min-w-0 xl:col-span-5">
+                <CardTitle hint="Numbers from the booklet's first # up to the highest one entered that are not in the records: skipped, cancelled or not yet entered.">
+                    Skipped receipts
+                </CardTitle>
+                <div className="space-y-5">
+                    <Skipped doc="si" label="SI #" gaps={skipped.si} />
+                    <Skipped doc="dr" label="DR #" gaps={skipped.dr} />
+                </div>
             </Card>
 
             <Card className="min-w-0 xl:col-span-7">
@@ -737,6 +768,35 @@ export default function Dashboard({
                                 {c.overdue > 0 && <span className="text-destructive mt-1 block text-xs">{peso(c.overdue)} overdue</span>}
                             </Link>
                         </li>
+                    ))}
+                </ul>
+            </Card>
+
+            <Card className="min-w-0 xl:col-span-5">
+                <CardTitle
+                    hint={
+                        <>
+                            Not counted as sales anywhere on this page.{' '}
+                            {cancelled.count > 0 && (
+                                <Link href={scoped({ show: 'cancelled' })} className="text-primary font-medium hover:underline">
+                                    See all {fmt(cancelled.count)}
+                                </Link>
+                            )}
+                        </>
+                    }
+                >
+                    Cancelled SIs
+                </CardTitle>
+                <ul className="divide-y">
+                    {cancelled.rows.length === 0 && <Empty>No cancelled SIs.</Empty>}
+                    {cancelled.rows.map((r) => (
+                        <Row
+                            key={r.id}
+                            r={r}
+                            sub={[r.sold_to, r.project].filter(Boolean).join(' · ') || 'No company'}
+                            note="Cancelled"
+                            noteCls="text-muted-foreground"
+                        />
                     ))}
                 </ul>
             </Card>

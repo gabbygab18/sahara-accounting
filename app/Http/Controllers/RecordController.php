@@ -22,7 +22,7 @@ class RecordController extends Controller
     private const FILTERS = ['q', 'in', 'company', 'project', 'delivery', 'payment', 'from', 'to', 'show', 'order'];
 
     /** ?show= lists from the summary: an unpaid age group (Record::AGING), or delivered but not yet invoiced. */
-    public const SHOWS = ['not-invoiced' => 'Delivered, not yet invoiced', 'missing' => 'To recheck (wrong computation, or no actual SI, SI date or terms)', 'uncleared' => 'Checks not cleared'];
+    public const SHOWS = ['not-invoiced' => 'Delivered, not yet invoiced', 'missing' => 'To recheck (wrong computation, or no actual SI, SI date or terms)', 'uncleared' => 'For clearing (checks not cleared)', 'cancelled' => 'Cancelled SIs'];
 
     public function index(Request $request): Response
     {
@@ -214,6 +214,7 @@ class RecordController extends Controller
             ->when($request->to, fn ($q, $d) => $q->whereRaw('COALESCE(si_date, dr_date) <= ?', [$d]))
             ->when($request->show === 'not-invoiced', fn ($q) => $q->whereNotNull('dr_number')->whereNull('si_number'))
             ->when($request->show === 'uncleared', fn ($q) => $q->uncleared())
+            ->when($request->show === 'cancelled', fn ($q) => $q->where('si_cancelled', true))
             ->when($request->show === 'missing', fn ($q) => $q->whereIn('id', Record::get(['id', 'paid', 'si_date', 'counter_date', 'terms_days', 'si_missing', 'si_cancelled', 'wrong_computation'])
                 ->filter->missing()->modelKeys()))
             // ponytail: due dates are worked out in PHP (date maths differs per SQL dialect); fine into the tens of thousands

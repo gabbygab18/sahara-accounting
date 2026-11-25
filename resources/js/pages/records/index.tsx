@@ -44,8 +44,8 @@ const SEARCH_IN = [
     { value: 'dr', label: 'DR #' },
 ];
 
-// Paid by check that has not cleared yet: "For clearing" until it is marked Cleared.
-const clearing = (r: AccountingRecord) => r.paid && !r.cash && !r.check_cleared && !!(r.check_number || r.check_date);
+// Paid by check (and confirmed) that has not cleared yet: "For clearing" until it is marked Cleared.
+const clearing = (r: AccountingRecord) => r.paid && r.paid_confirmed && !r.cash && !r.check_cleared && !!(r.check_number || r.check_date);
 
 const DELIVERY_VARIANT: Record<string, 'success' | 'warning' | 'secondary'> = { Delivered: 'success', Partial: 'warning' };
 
@@ -336,7 +336,7 @@ export default function Records({
                                     <Badge size="sm" variant="secondary">
                                         Cancelled
                                     </Badge>
-                                ) : r.paid && r.paid_confirmed && clearing(r) ? (
+                                ) : clearing(r) ? (
                                     <span className="flex flex-wrap items-center gap-1.5">
                                         <Badge size="sm" variant="warning">
                                             For clearing
